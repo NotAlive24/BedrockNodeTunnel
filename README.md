@@ -57,15 +57,3 @@ makepkg -si
 Useful flags: `-version` prints the version, `-reset-token` forgets the saved token and claims a new one, `-token <value>` skips the claim step. See `man nethernet-client` for all options.
 
 Windows users: use Option 1 or 2 above for now.
-
-### Building the release files
-
-Maintainers can produce every release artifact (`.deb` for amd64 and arm64, the source tarball with vendored dependencies, the `PKGBUILD`, and `SHA256SUMS`) with one command. It only needs Go and git:
-
-```bash
-go run ./tools/release
-```
-
-Files are written to `dist/`. Upload all of them to a GitHub release tagged `v1.0`. Defaults (version `1.0`, maintainer, repository URL) can be changed with `-version`, `-maintainer "Name <email>"` and `-repo <url>`. The output is reproducible for a given git commit.
-
-Add `-targets deb,arch,windows` to also build the Windows `.exe`.
