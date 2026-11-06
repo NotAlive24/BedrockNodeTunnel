@@ -1,6 +1,5 @@
 # ⚡ Bedrock Node Tunnel (Open-Source Client)
 
-![Bedrock Node Tunnel](logo.jpg)
 
 **Bedrock Node Tunnel** is a 100% Vanilla Minecraft Bedrock Dedicated Server (`transport=nethernet`) WebRTC UDP + TCP tunneling client. Host your Bedrock server behind Starlink, CGNAT, or strict routers without WaterdogPE, Geyser, or wiped player XUIDs/inventories.
 
