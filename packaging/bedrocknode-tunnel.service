@@ -1,0 +1,12 @@
+[Unit]
+Description=Bedrock Node Tunnel client
+
+[Service]
+ExecStart=/usr/bin/nethernet-client
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target
