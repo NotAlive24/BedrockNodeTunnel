@@ -1,5 +1,5 @@
 module nethernet-proxy
 
-go 1.27.3
+go 1.21
 
-require github.com/hashicorp/yamux v0.1.2 // indirect
+require github.com/hashicorp/yamux v0.1.2
