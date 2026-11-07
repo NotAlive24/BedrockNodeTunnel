@@ -33,3 +33,27 @@ If you prefer to compile the client yourself or avoid Windows Defender `.exe` wa
 3. Open PowerShell in the folder and run:
    ```powershell
    go run client.go
+   ```
+
+---
+
+## 📦 Prebuilt releases (Debian/Ubuntu and Arch Linux)
+
+Download the files from the [Releases](../../releases) page. On the first run the client prints a **Claim Link** (and opens it in your browser when a desktop is available). The tunnel token is saved automatically in `~/.config/bedrocknode-tunnel/`.
+
+**Debian / Ubuntu / Raspberry Pi OS:**
+```bash
+sudo apt install ./bedrocknode-tunnel_1.0_amd64.deb    # use the arm64 file on ARM
+nethernet-client                                       # first run: claim your tunnel
+systemctl --user enable --now bedrocknode-tunnel       # keep it running in the background
+loginctl enable-linger "$USER"                         # start at boot without logging in
+```
+
+**Arch Linux:** download `PKGBUILD` and `bedrocknode-tunnel-1.0.tar.gz` into one folder, then:
+```bash
+makepkg -si
+```
+
+Useful flags: `-version` prints the version, `-reset-token` forgets the saved token and claims a new one, `-token <value>` skips the claim step. See `man nethernet-client` for all options.
+
+Windows users: use Option 1 or 2 above for now.
