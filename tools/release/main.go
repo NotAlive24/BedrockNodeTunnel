@@ -30,8 +30,8 @@ var templateFS embed.FS
 const (
 	pkgName           = "bedrocknode-tunnel"
 	binName           = "nethernet-client"
-	defaultMaintainer = "NotAlive24 <NotAlive24@users.noreply.github.com>"
-	defaultRepo       = "https://github.com/NotAlive24/BedrockNodeTunnel"
+	defaultMaintainer = "Nutcrustys420 <stonercraft420@users.noreply.github.com>"
+	defaultRepo       = "https://github.com/stonercraft420/BedrockNodeTunnel"
 	lintianOverride   = "bedrocknode-tunnel: statically-linked-binary [usr/bin/nethernet-client]\n"
 )
 
