@@ -4,14 +4,17 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -26,7 +29,13 @@ const (
 	StreamTypeUDP  = 0x02
 	StreamTypeTCP  = 0x03
 	tokenSaveFile  = "bedrocknode-token.txt"
+	maxTokenLength = 4096
+	handshakeHint  = 5
 )
+
+var version = "dev"
+
+var errInvalidToken = errors.New("invalid auth token rejected by server")
 
 func main() {
 	var (
@@ -36,6 +45,8 @@ func main() {
 		localSignaling  string
 		localUDPIP      string
 		localUDPDefault int
+		resetToken      bool
+		showVersion     bool
 	)
 
 	flag.StringVar(&controlAddr, "control", "51.222.142.179:7000", "Bedrock Node Tunnel VPS control address")
@@ -44,19 +55,120 @@ func main() {
 	flag.StringVar(&localSignaling, "local-http", "127.0.0.1:19132", "Local Bedrock TCP target on Home PC")
 	flag.StringVar(&localUDPIP, "local-udp-ip", "", "Local LAN IP for Bedrock UDP (auto-detected if empty)")
 	flag.IntVar(&localUDPDefault, "local-udp-port", 47334, "Fallback local UDP port on Home PC")
+	flag.BoolVar(&resetToken, "reset-token", false, "Delete the saved tunnel token and claim a new one")
+	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println(version)
+		return
+	}
+
+	token = strings.TrimSpace(token)
+	if token != "" && !isValidToken(token) {
+		log.Fatalf("[Bedrock Node Tunnel] Invalid -token value: must be 1-%d printable ASCII characters without spaces", maxTokenLength)
+	}
+	if resetToken {
+		clearSavedTokens()
+	}
+
+	cleanWebURL, err := validateWebURL(webUrl)
+	if err != nil {
+		log.Fatalf("[Bedrock Node Tunnel] Invalid web URL: %v", err)
+	}
 
 	if localUDPIP == "" {
 		localUDPIP = detectOutboundLANIP()
 	}
 
-	log.Printf("[Bedrock Node Tunnel] Open-Source Client Starting...")
+	log.Printf("[Bedrock Node Tunnel] Open-Source Client %s Starting...", version)
 	log.Printf("[Bedrock Node Tunnel] Local TCP target: %s | Local UDP target IP: %s", localSignaling, localUDPIP)
-	runClient(controlAddr, webUrl, token, localSignaling, localUDPIP, localUDPDefault)
+	runClient(controlAddr, cleanWebURL, token, localSignaling, localUDPIP, localUDPDefault)
+}
+
+func validateWebURL(rawURL string) (string, error) {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil {
+		return "", err
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return "", errors.New("URL scheme must be http or https")
+	}
+	if u.Host == "" {
+		return "", errors.New("URL host cannot be empty")
+	}
+	return strings.TrimRight(u.String(), "/"), nil
+}
+
+func candidateTokenPaths() []string {
+	var paths []string
+	if configDir, err := os.UserConfigDir(); err == nil && configDir != "" {
+		paths = append(paths, filepath.Join(configDir, "bedrocknode-tunnel", tokenSaveFile))
+	} else if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		paths = append(paths, filepath.Join(homeDir, ".config", "bedrocknode-tunnel", tokenSaveFile))
+	}
+	return append(paths, tokenSaveFile)
+}
+
+func loadSavedToken() (string, string) {
+	for _, p := range candidateTokenPaths() {
+		if data, err := os.ReadFile(p); err == nil {
+			saved := strings.TrimSpace(string(data))
+			if isValidToken(saved) {
+				return saved, p
+			}
+		}
+	}
+	return "", ""
+}
+
+func saveToken(tok string) string {
+	for _, p := range candidateTokenPaths() {
+		dir := filepath.Dir(p)
+		if dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				continue
+			}
+		}
+		if err := os.WriteFile(p, []byte(tok), 0600); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+func clearSavedTokens() {
+	for _, p := range candidateTokenPaths() {
+		_ = os.Remove(p)
+	}
+}
+
+func openBrowser(targetURL string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", targetURL)
+	case "darwin":
+		cmd = exec.Command("open", targetURL)
+	case "linux":
+		if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+			return
+		}
+		path, err := exec.LookPath("xdg-open")
+		if err != nil {
+			return
+		}
+		cmd = exec.Command(path, targetURL)
+	default:
+		return
+	}
+	if cmd.Start() == nil {
+		go func() { _ = cmd.Wait() }()
+	}
 }
 
 func detectOutboundLANIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
+	conn, err := net.DialTimeout("udp", "8.8.8.8:80", 3*time.Second)
 	if err != nil {
 		return "127.0.0.1"
 	}
@@ -81,20 +193,38 @@ func randomHex(nBytes int) string {
 	return hex.EncodeToString(b)
 }
 
+func isValidToken(tok string) bool {
+	if len(tok) == 0 || len(tok) > maxTokenLength {
+		return false
+	}
+	for _, r := range tok {
+		if r <= 0x20 || r >= 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func readToken(r io.Reader) (string, bool) {
+	body, err := io.ReadAll(io.LimitReader(r, maxTokenLength+1))
+	if err != nil || len(body) > maxTokenLength {
+		return "", false
+	}
+	tok := strings.TrimSpace(string(body))
+	return tok, isValidToken(tok)
+}
+
 func obtainOrClaimToken(webUrl, flagToken string) string {
-	if flagToken != "" {
+	if isValidToken(flagToken) {
 		return flagToken
 	}
-	if data, err := os.ReadFile(tokenSaveFile); err == nil {
-		saved := strings.TrimSpace(string(data))
-		if saved != "" {
-			log.Printf("[Bedrock Node Tunnel] Loaded saved tunnel token from %s", tokenSaveFile)
-			return saved
-		}
+	if saved, path := loadSavedToken(); saved != "" {
+		log.Printf("[Bedrock Node Tunnel] Loaded saved tunnel token from %s", path)
+		return saved
 	}
 
 	claimCode := strings.ToUpper(randomHex(3))
-	claimLink := fmt.Sprintf("%s/?claim=%s", strings.TrimRight(webUrl, "/"), claimCode)
+	claimLink := fmt.Sprintf("%s/?claim=%s", strings.TrimRight(webUrl, "/"), url.QueryEscape(claimCode))
 
 	fmt.Println("==========================================================================")
 	fmt.Println("  BEDROCK NODE TUNNEL — FIRST TIME SETUP")
@@ -104,27 +234,26 @@ func obtainOrClaimToken(webUrl, flagToken string) string {
 	fmt.Printf("  2. Or log into %s and enter Claim Code: %s\n", webUrl, claimCode)
 	fmt.Println("==========================================================================")
 
-	if runtime.GOOS == "windows" {
-		_ = exec.Command("cmd", "/c", "start", claimLink).Start()
-	}
+	openBrowser(claimLink)
 
-	pollUrl := fmt.Sprintf("%s/api/poll-claim?code=%s", strings.TrimRight(webUrl, "/"), claimCode)
+	pollUrl := fmt.Sprintf("%s/api/poll-claim?code=%s", strings.TrimRight(webUrl, "/"), url.QueryEscape(claimCode))
 	client := &http.Client{Timeout: 5 * time.Second}
 
 	for {
 		resp, err := client.Get(pollUrl)
 		if err == nil {
 			if resp.StatusCode == http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				tok, ok := readToken(resp.Body)
 				resp.Body.Close()
-				tok := strings.TrimSpace(string(body))
-				if tok != "" {
-					_ = os.WriteFile(tokenSaveFile, []byte(tok), 0600)
-					log.Printf("[Bedrock Node Tunnel] Tunnel claimed! Saved token to %s.", tokenSaveFile)
+				if ok {
+					if savedPath := saveToken(tok); savedPath != "" {
+						log.Printf("[Bedrock Node Tunnel] Tunnel claimed! Saved token to %s.", savedPath)
+					}
 					return tok
 				}
+			} else {
+				resp.Body.Close()
 			}
-			resp.Body.Close()
 		}
 		time.Sleep(3 * time.Second)
 	}
@@ -143,7 +272,7 @@ func sendTunnelToken(conn net.Conn, token string) error {
 		return err
 	}
 	if ack[0] != 0x01 {
-		return fmt.Errorf("invalid auth token rejected by server")
+		return errInvalidToken
 	}
 	return nil
 }
@@ -176,6 +305,7 @@ func readFramedPacket(r io.Reader) ([]byte, error) {
 
 func runClient(controlAddr, webUrl, flagToken, localSignaling, localUDPIP string, localUDPDefault int) {
 	token := obtainOrClaimToken(webUrl, flagToken)
+	handshakeFailures := 0
 
 	for {
 		log.Printf("[Tunnel Client] Dialing Bedrock Node Tunnel VPS at %s...", controlAddr)
@@ -187,12 +317,24 @@ func runClient(controlAddr, webUrl, flagToken, localSignaling, localUDPIP string
 		}
 
 		if err := sendTunnelToken(conn, token); err != nil {
-			log.Printf("[Tunnel Client] Auth error (%v) - deleting saved token and re-claiming...", err)
 			conn.Close()
-			_ = os.Remove(tokenSaveFile)
-			token = obtainOrClaimToken(webUrl, "")
+			if errors.Is(err, errInvalidToken) {
+				log.Printf("[Tunnel Client] Auth error (%v) - deleting saved token and re-claiming...", err)
+				clearSavedTokens()
+				token = obtainOrClaimToken(webUrl, "")
+				handshakeFailures = 0
+				time.Sleep(3 * time.Second)
+			} else {
+				handshakeFailures++
+				log.Printf("[Tunnel Client] Handshake failed (%v). Retrying in 3s...", err)
+				if handshakeFailures%handshakeHint == 0 {
+					log.Printf("[Tunnel Client] The server closed the connection %d times in a row during login. If your token may be invalid, restart with -reset-token to claim a new one.", handshakeFailures)
+				}
+				time.Sleep(3 * time.Second)
+			}
 			continue
 		}
+		handshakeFailures = 0
 
 		sess, err := yamux.Client(conn, newYamuxConfig())
 		if err != nil {
@@ -208,6 +350,7 @@ func runClient(controlAddr, webUrl, flagToken, localSignaling, localUDPIP string
 			stream, err := sess.Accept()
 			if err != nil {
 				log.Printf("[Tunnel Client] Tunnel disconnected (%v). Reconnecting...", err)
+				_ = sess.Close()
 				break
 			}
 			go handleIncomingStream(stream, localSignaling, localUDPIP, localUDPDefault)
@@ -264,9 +407,9 @@ func handleIncomingStream(stream net.Conn, localSignaling, localUDPIP string, lo
 			addr string
 		}
 		specs := []targetSpec{
-			{"udp4", fmt.Sprintf("%s:%d", localUDPIP, targetPort)},
-			{"udp4", fmt.Sprintf("127.0.0.1:%d", targetPort)},
-			{"udp6", fmt.Sprintf("[::1]:%d", targetPort)},
+			{"udp4", net.JoinHostPort(localUDPIP, fmt.Sprintf("%d", targetPort))},
+			{"udp4", net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", targetPort))},
+			{"udp6", net.JoinHostPort("::1", fmt.Sprintf("%d", targetPort))},
 		}
 
 		type candConn struct {
@@ -314,6 +457,7 @@ func handleIncomingStream(stream net.Conn, localSignaling, localUDPIP string, lo
 					if err != nil {
 						errStr := err.Error()
 						if strings.Contains(errStr, "forcibly closed") || strings.Contains(errStr, "connection refused") {
+							time.Sleep(50 * time.Millisecond)
 							continue
 						}
 						return
