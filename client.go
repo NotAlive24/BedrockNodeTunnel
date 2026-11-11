@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -29,6 +30,7 @@ const (
 	StreamTypeUDP  = 0x02
 	StreamTypeTCP  = 0x03
 	tokenSaveFile  = "bedrocknode-token.txt"
+	nodeSaveFile   = "bedrocknode-node.txt"
 	maxTokenLength = 4096
 	handshakeHint  = 5
 )
@@ -37,8 +39,37 @@ var version = "dev"
 
 var errInvalidToken = errors.New("invalid auth token rejected by server")
 
+type RegionNode struct {
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	WebURL      string `json:"webUrl"`
+	ControlAddr string `json:"controlAddr"`
+}
+
+var defaultRegionNodes = []RegionNode{
+	{
+		Code:        "US",
+		Name:        "North America (US Hub)",
+		WebURL:      "https://bedrocknode.net",
+		ControlAddr: "51.222.142.179:7000",
+	},
+	{
+		Code:        "BR",
+		Name:        "South America (Brazil Hub)",
+		WebURL:      "https://southa.bedrocknode.net",
+		ControlAddr: "216.128.170.42:7000",
+	},
+	{
+		Code:        "ASIA",
+		Name:        "Asia-Pacific (Singapore Hub)",
+		WebURL:      "https://asia.bedrocknode.net",
+		ControlAddr: "45.32.121.108:7000",
+	},
+}
+
 func main() {
 	var (
+		nodeFlag        string
 		controlAddr     string
 		webUrl          string
 		token           string
@@ -49,7 +80,8 @@ func main() {
 		showVersion     bool
 	)
 
-	flag.StringVar(&controlAddr, "control", "51.222.142.179:7000", "Bedrock Node Tunnel VPS control address")
+	flag.StringVar(&nodeFlag, "node", "", "Region code (US, BR, ASIA) or custom VPS domain/IP (e.g. asia.bedrocknode.net)")
+	flag.StringVar(&controlAddr, "control", "", "Bedrock Node Tunnel VPS control address (auto-detected across regions if empty)")
 	flag.StringVar(&webUrl, "web", "https://bedrocknode.net", "Bedrock Node Tunnel Web Dashboard URL")
 	flag.StringVar(&token, "token", "", "Tunnel token (leave empty for automatic browser claim)")
 	flag.StringVar(&localSignaling, "local-http", "127.0.0.1:19132", "Local Bedrock TCP target on Home PC")
@@ -64,6 +96,11 @@ func main() {
 		return
 	}
 
+	explicitFlags := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) {
+		explicitFlags[f.Name] = true
+	})
+
 	token = strings.TrimSpace(token)
 	if token != "" && !isValidToken(token) {
 		log.Fatalf("[Bedrock Node Tunnel] Invalid -token value: must be 1-%d printable ASCII characters without spaces", maxTokenLength)
@@ -77,13 +114,150 @@ func main() {
 		log.Fatalf("[Bedrock Node Tunnel] Invalid web URL: %v", err)
 	}
 
+	pollWebOverride := ""
+
+	// Automatically pair -node, -web, and -control so partial flags never mismatch regions
+	if nodeFlag != "" {
+		n := resolveNodeInput(nodeFlag)
+		if !explicitFlags["control"] {
+			controlAddr = n.ControlAddr
+		}
+		if !explicitFlags["web"] && n.WebURL != "" {
+			cleanWebURL = n.WebURL
+		}
+		pollWebOverride = cleanWebURL
+		_ = saveNodeAddr(controlAddr)
+	} else if explicitFlags["control"] && !explicitFlags["web"] {
+		n := resolveNodeInput(controlAddr)
+		controlAddr = n.ControlAddr
+		if n.WebURL != "" {
+			cleanWebURL = n.WebURL
+		}
+		pollWebOverride = cleanWebURL
+		_ = saveNodeAddr(controlAddr)
+	} else if explicitFlags["web"] && !explicitFlags["control"] {
+		n := resolveNodeInput(cleanWebURL)
+		controlAddr = n.ControlAddr
+		pollWebOverride = cleanWebURL
+		_ = saveNodeAddr(controlAddr)
+	} else if explicitFlags["web"] && explicitFlags["control"] {
+		pollWebOverride = cleanWebURL
+		_ = saveNodeAddr(controlAddr)
+	}
+
 	if localUDPIP == "" {
 		localUDPIP = detectOutboundLANIP()
 	}
 
-	log.Printf("[Bedrock Node Tunnel] Open-Source Client %s Starting...", version)
+	log.Printf("[Bedrock Node Tunnel] Universal Open-Source Client %s Starting...", version)
 	log.Printf("[Bedrock Node Tunnel] Local TCP target: %s | Local UDP target IP: %s", localSignaling, localUDPIP)
-	runClient(controlAddr, cleanWebURL, token, localSignaling, localUDPIP, localUDPDefault)
+	runClient(controlAddr, pollWebOverride, token, localSignaling, localUDPIP, localUDPDefault)
+}
+
+func resolveNodeInput(input string) RegionNode {
+	clean := strings.TrimSpace(input)
+	upper := strings.ToUpper(clean)
+
+	for _, n := range defaultRegionNodes {
+		hostOnly := strings.TrimPrefix(strings.TrimPrefix(n.WebURL, "https://"), "http://")
+		ipOnly := strings.TrimSuffix(n.ControlAddr, ":7000")
+		if upper == n.Code || strings.EqualFold(clean, n.WebURL) || strings.EqualFold(clean, n.ControlAddr) ||
+			strings.EqualFold(clean, hostOnly) || strings.EqualFold(clean, ipOnly) {
+			return n
+		}
+	}
+
+	clean = strings.TrimPrefix(clean, "https://")
+	clean = strings.TrimPrefix(clean, "http://")
+	clean = strings.TrimRight(clean, "/")
+
+	host := clean
+	ctrl := clean
+	if strings.Contains(clean, ":") {
+		h, p, err := net.SplitHostPort(clean)
+		if err == nil {
+			host = h
+			if p == "8080" || p == "443" || p == "80" {
+				ctrl = net.JoinHostPort(h, "7000")
+			} else {
+				ctrl = clean
+			}
+		}
+	} else {
+		ctrl = net.JoinHostPort(clean, "7000")
+	}
+
+	scheme := "https://"
+	if net.ParseIP(host) != nil {
+		scheme = "http://"
+		return RegionNode{
+			Code:        "CUSTOM",
+			Name:        "Custom Node (" + host + ")",
+			WebURL:      scheme + net.JoinHostPort(host, "8080"),
+			ControlAddr: ctrl,
+		}
+	}
+
+	return RegionNode{
+		Code:        "CUSTOM",
+		Name:        "Custom Node (" + host + ")",
+		WebURL:      scheme + host,
+		ControlAddr: ctrl,
+	}
+}
+
+func getActiveNodeList(customControl, customWeb string) []RegionNode {
+	// If the user explicitly passed a region via -node, -control, or -web, use that specific node
+	if customControl != "" || customWeb != "" {
+		cAddr := customControl
+		wURL := customWeb
+		if cAddr == "" && wURL != "" {
+			cAddr = resolveNodeInput(wURL).ControlAddr
+		}
+		if wURL == "" && cAddr != "" {
+			wURL = resolveNodeInput(cAddr).WebURL
+		}
+		return []RegionNode{
+			{
+				Code:        "CUSTOM",
+				Name:        "Selected Node (" + cAddr + ")",
+				WebURL:      strings.TrimRight(wURL, "/"),
+				ControlAddr: cAddr,
+			},
+		}
+	}
+
+	var nodes []RegionNode
+	seenCtrl := make(map[string]bool)
+	addNode := func(n RegionNode) {
+		if n.ControlAddr == "" || seenCtrl[n.ControlAddr] {
+			return
+		}
+		seenCtrl[n.ControlAddr] = true
+		nodes = append(nodes, n)
+	}
+
+	// Optional live discovery for future nodes if /api/nodes is added later
+	client := &http.Client{Timeout: 2 * time.Second}
+	if resp, err := client.Get("https://bedrocknode.net/api/nodes"); err == nil {
+		if resp.StatusCode == http.StatusOK {
+			var remoteNodes []RegionNode
+			if json.NewDecoder(resp.Body).Decode(&remoteNodes) == nil {
+				for _, rn := range remoteNodes {
+					if rn.ControlAddr == "" && rn.WebURL != "" {
+						rn = resolveNodeInput(rn.WebURL)
+					}
+					addNode(rn)
+				}
+			}
+		}
+		resp.Body.Close()
+	}
+
+	for _, n := range defaultRegionNodes {
+		addNode(n)
+	}
+	return nodes
 }
 
 func validateWebURL(rawURL string) (string, error) {
@@ -108,6 +282,16 @@ func candidateTokenPaths() []string {
 		paths = append(paths, filepath.Join(homeDir, ".config", "bedrocknode-tunnel", tokenSaveFile))
 	}
 	return append(paths, tokenSaveFile)
+}
+
+func candidateNodePaths() []string {
+	var paths []string
+	if configDir, err := os.UserConfigDir(); err == nil && configDir != "" {
+		paths = append(paths, filepath.Join(configDir, "bedrocknode-tunnel", nodeSaveFile))
+	} else if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		paths = append(paths, filepath.Join(homeDir, ".config", "bedrocknode-tunnel", nodeSaveFile))
+	}
+	return append(paths, nodeSaveFile)
 }
 
 func loadSavedToken() (string, string) {
@@ -137,10 +321,57 @@ func saveToken(tok string) string {
 	return ""
 }
 
+func loadSavedNodeAddr() string {
+	for _, p := range candidateNodePaths() {
+		if data, err := os.ReadFile(p); err == nil {
+			raw := strings.TrimSpace(string(data))
+			if raw != "" {
+				return resolveNodeInput(raw).ControlAddr
+			}
+		}
+	}
+	return ""
+}
+
+func saveNodeAddr(ctrlAddr string) string {
+	ctrlAddr = strings.TrimSpace(ctrlAddr)
+	if ctrlAddr == "" {
+		return ""
+	}
+	for _, p := range candidateNodePaths() {
+		dir := filepath.Dir(p)
+		if dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				continue
+			}
+		}
+		if err := os.WriteFile(p, []byte(ctrlAddr), 0600); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
 func clearSavedTokens() {
 	for _, p := range candidateTokenPaths() {
 		_ = os.Remove(p)
 	}
+	for _, p := range candidateNodePaths() {
+		_ = os.Remove(p)
+	}
+}
+
+func splitOptionalNodeToken(raw string) (string, string) {
+	s := strings.TrimSpace(raw)
+	if strings.Contains(s, "|") {
+		parts := strings.SplitN(s, "|", 2)
+		nPart := strings.TrimSpace(parts[0])
+		tPart := strings.TrimSpace(parts[1])
+		if nPart != "" && isValidToken(tPart) {
+			return resolveNodeInput(nPart).ControlAddr, tPart
+		}
+	}
+	return "", s
 }
 
 func openBrowser(targetURL string) {
@@ -214,48 +445,81 @@ func readToken(r io.Reader) (string, bool) {
 	return tok, isValidToken(tok)
 }
 
-func obtainOrClaimToken(webUrl, flagToken string) string {
+func obtainOrClaimToken(customControl, customWeb, flagToken string) (string, string) {
 	if isValidToken(flagToken) {
-		return flagToken
+		embCtrl, cleanTok := splitOptionalNodeToken(flagToken)
+		if embCtrl == "" {
+			embCtrl = customControl
+		}
+		if embCtrl == "" {
+			embCtrl = loadSavedNodeAddr()
+		}
+		return embCtrl, cleanTok
 	}
+
 	if saved, path := loadSavedToken(); saved != "" {
+		embCtrl, cleanTok := splitOptionalNodeToken(saved)
+		if embCtrl == "" {
+			embCtrl = customControl
+		}
+		if embCtrl == "" {
+			embCtrl = loadSavedNodeAddr()
+		}
 		log.Printf("[Bedrock Node Tunnel] Loaded saved tunnel token from %s", path)
-		return saved
+		return embCtrl, cleanTok
 	}
 
+	nodes := getActiveNodeList(customControl, customWeb)
 	claimCode := strings.ToUpper(randomHex(3))
-	claimLink := fmt.Sprintf("%s/?claim=%s", strings.TrimRight(webUrl, "/"), url.QueryEscape(claimCode))
 
 	fmt.Println("==========================================================================")
-	fmt.Println("  BEDROCK NODE TUNNEL — FIRST TIME SETUP")
+	fmt.Println("  BEDROCK NODE TUNNEL â€” FIRST TIME SETUP (MULTI-REGION)")
 	fmt.Println("==========================================================================")
-	fmt.Printf("  1. Open this link in your browser to claim your tunnel:\n")
-	fmt.Printf("     %s\n\n", claimLink)
-	fmt.Printf("  2. Or log into %s and enter Claim Code: %s\n", webUrl, claimCode)
+	fmt.Printf("  Claim Code: %s\n\n", claimCode)
+	fmt.Println("  Open your closest regional dashboard to claim this tunnel:")
+	for _, n := range nodes {
+		if n.WebURL != "" {
+			fmt.Printf("  â€¢ %-30s %s/?claim=%s\n", n.Name+":", strings.TrimRight(n.WebURL, "/"), url.QueryEscape(claimCode))
+		}
+	}
 	fmt.Println("==========================================================================")
 
-	openBrowser(claimLink)
+	if len(nodes) > 0 && nodes[0].WebURL != "" {
+		firstLink := fmt.Sprintf("%s/?claim=%s", strings.TrimRight(nodes[0].WebURL, "/"), url.QueryEscape(claimCode))
+		openBrowser(firstLink)
+	}
 
-	pollUrl := fmt.Sprintf("%s/api/poll-claim?code=%s", strings.TrimRight(webUrl, "/"), url.QueryEscape(claimCode))
-	client := &http.Client{Timeout: 5 * time.Second}
+	client := &http.Client{Timeout: 4 * time.Second}
 
 	for {
-		resp, err := client.Get(pollUrl)
-		if err == nil {
-			if resp.StatusCode == http.StatusOK {
-				tok, ok := readToken(resp.Body)
-				resp.Body.Close()
-				if ok {
-					if savedPath := saveToken(tok); savedPath != "" {
-						log.Printf("[Bedrock Node Tunnel] Tunnel claimed! Saved token to %s.", savedPath)
+		for _, n := range nodes {
+			if n.WebURL == "" {
+				continue
+			}
+			pollUrl := fmt.Sprintf("%s/api/poll-claim?code=%s", strings.TrimRight(n.WebURL, "/"), url.QueryEscape(claimCode))
+			resp, err := client.Get(pollUrl)
+			if err == nil {
+				if resp.StatusCode == http.StatusOK {
+					tok, ok := readToken(resp.Body)
+					resp.Body.Close()
+					if ok {
+						embCtrl, cleanTok := splitOptionalNodeToken(tok)
+						chosenCtrl := embCtrl
+						if chosenCtrl == "" {
+							chosenCtrl = n.ControlAddr
+						}
+						if savedPath := saveToken(cleanTok); savedPath != "" {
+							log.Printf("[Bedrock Node Tunnel] Tunnel claimed on %s! Saved token to %s.", n.Name, savedPath)
+						}
+						_ = saveNodeAddr(chosenCtrl)
+						return chosenCtrl, cleanTok
 					}
-					return tok
+				} else {
+					resp.Body.Close()
 				}
-			} else {
-				resp.Body.Close()
 			}
 		}
-		time.Sleep(3 * time.Second)
+		time.Sleep(2500 * time.Millisecond)
 	}
 }
 
@@ -303,48 +567,108 @@ func readFramedPacket(r io.Reader) ([]byte, error) {
 	return payload, nil
 }
 
-func runClient(controlAddr, webUrl, flagToken, localSignaling, localUDPIP string, localUDPDefault int) {
-	token := obtainOrClaimToken(webUrl, flagToken)
+func runClient(customControl, customWeb, flagToken, localSignaling, localUDPIP string, localUDPDefault int) {
+	targetControl, token := obtainOrClaimToken(customControl, customWeb, flagToken)
 	handshakeFailures := 0
 
 	for {
-		log.Printf("[Tunnel Client] Dialing Bedrock Node Tunnel VPS at %s...", controlAddr)
-		conn, err := net.DialTimeout("tcp", controlAddr, 10*time.Second)
-		if err != nil {
-			log.Printf("[Tunnel Client] Connection failed (%v). Retrying in 3s...", err)
-			time.Sleep(3 * time.Second)
-			continue
-		}
+		var authConn net.Conn
+		var activeControl string
 
-		if err := sendTunnelToken(conn, token); err != nil {
-			conn.Close()
-			if errors.Is(err, errInvalidToken) {
-				log.Printf("[Tunnel Client] Auth error (%v) - deleting saved token and re-claiming...", err)
-				clearSavedTokens()
-				token = obtainOrClaimToken(webUrl, "")
-				handshakeFailures = 0
+		// 1. If we already know the regional control address, dial it directly
+		if targetControl != "" {
+			log.Printf("[Tunnel Client] Dialing Bedrock Node Tunnel VPS at %s...", targetControl)
+			conn, err := net.DialTimeout("tcp", targetControl, 10*time.Second)
+			if err != nil {
+				log.Printf("[Tunnel Client] Connection to %s failed (%v). Retrying in 3s...", targetControl, err)
 				time.Sleep(3 * time.Second)
-			} else {
-				handshakeFailures++
-				log.Printf("[Tunnel Client] Handshake failed (%v). Retrying in 3s...", err)
-				if handshakeFailures%handshakeHint == 0 {
-					log.Printf("[Tunnel Client] The server closed the connection %d times in a row during login. If your token may be invalid, restart with -reset-token to claim a new one.", handshakeFailures)
-				}
-				time.Sleep(3 * time.Second)
+				continue
 			}
-			continue
-		}
-		handshakeFailures = 0
 
-		sess, err := yamux.Client(conn, newYamuxConfig())
+			if err := sendTunnelToken(conn, token); err != nil {
+				conn.Close()
+				if errors.Is(err, errInvalidToken) {
+					if customControl != "" {
+						log.Printf("[Tunnel Client] Auth error on %s (%v) - deleting saved token and re-claiming...", targetControl, err)
+						clearSavedTokens()
+						targetControl, token = obtainOrClaimToken(customControl, customWeb, "")
+						handshakeFailures = 0
+						time.Sleep(3 * time.Second)
+						continue
+					}
+					log.Printf("[Tunnel Client] Token not found on %s â€” checking other regional hubs...", targetControl)
+					targetControl = ""
+				} else {
+					handshakeFailures++
+					log.Printf("[Tunnel Client] Handshake failed (%v). Retrying in 3s...", err)
+					if handshakeFailures%handshakeHint == 0 {
+						log.Printf("[Tunnel Client] The server closed the connection %d times in a row during login. If your token may be invalid, restart with -reset-token to claim a new one.", handshakeFailures)
+					}
+					time.Sleep(3 * time.Second)
+					continue
+				}
+			} else {
+				authConn = conn
+				activeControl = targetControl
+				handshakeFailures = 0
+			}
+		}
+
+		// 2. If region is unknown (e.g., user placed bedrocknode-token.txt in folder), probe all regional hubs
+		if authConn == nil {
+			nodes := getActiveNodeList(customControl, customWeb)
+			reachable := 0
+			rejected := 0
+
+			for _, n := range nodes {
+				log.Printf("[Tunnel Client] Checking regional hub %s (%s)...", n.Name, n.ControlAddr)
+				conn, err := net.DialTimeout("tcp", n.ControlAddr, 6*time.Second)
+				if err != nil {
+					continue
+				}
+				reachable++
+
+				err = sendTunnelToken(conn, token)
+				if err == nil {
+					authConn = conn
+					activeControl = n.ControlAddr
+					targetControl = n.ControlAddr
+					_ = saveNodeAddr(targetControl)
+					handshakeFailures = 0
+					log.Printf("[Tunnel Client] Authenticated token on %s (%s)!", n.Name, n.ControlAddr)
+					break
+				}
+				conn.Close()
+				if errors.Is(err, errInvalidToken) {
+					rejected++
+				}
+			}
+
+			if authConn == nil {
+				if reachable > 0 && rejected == reachable {
+					log.Printf("[Tunnel Client] Token rejected by all %d reachable regional hubs - deleting saved token and re-claiming...", reachable)
+					clearSavedTokens()
+					targetControl, token = obtainOrClaimToken(customControl, customWeb, "")
+					handshakeFailures = 0
+					time.Sleep(3 * time.Second)
+					continue
+				}
+				handshakeFailures++
+				log.Printf("[Tunnel Client] Could not complete handshake with regional hubs yet. Retrying in 3s...")
+				time.Sleep(3 * time.Second)
+				continue
+			}
+		}
+
+		sess, err := yamux.Client(authConn, newYamuxConfig())
 		if err != nil {
 			log.Printf("[Tunnel Client] Yamux client error: %v", err)
-			conn.Close()
+			authConn.Close()
 			time.Sleep(3 * time.Second)
 			continue
 		}
 
-		log.Printf("[Tunnel Client] Authenticated tunnel established! TCP -> %s | UDP -> %s", localSignaling, localUDPIP)
+		log.Printf("[Tunnel Client] Authenticated tunnel established via %s! TCP -> %s | UDP -> %s", activeControl, localSignaling, localUDPIP)
 
 		for {
 			stream, err := sess.Accept()
