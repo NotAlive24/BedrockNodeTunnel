@@ -6,6 +6,8 @@ A standalone desktop companion for the Bedrock Node Tunnel client. The desktop a
 
 - Reads and saves a desktop connection profile in the user's configuration directory (`bedrocknode-tunnel/desktop.json`).
 - Starts and stops the existing CLI as a child process and streams its output into the UI.
+- Provides a cross-platform system tray menu to reopen the dashboard, start/stop the foreground client, and quit.
+- By default, closing the dashboard hides it to the tray; this can be disabled in Settings. Quitting explicitly exits the UI and stops only its foreground-managed client; a separately installed systemd background service remains independent.
 - Reports `connected` only after the client logs successful relay authentication. A process merely being alive is not treated as a confirmed tunnel.
 - Redacts token-like values from displayed and copied logs. The desktop profile does not store the tunnel token; the existing CLI token file remains authoritative.
 - On Linux, installs and manages a separate user-level systemd unit named `nethernet-desktop-tunnel.service`. It does not overwrite the existing `bedrocknode-tunnel.service`.
@@ -27,7 +29,7 @@ On Arch Linux:
 sudo pacman -S --needed base-devel pkgconf gtk4 webkitgtk-6.0
 go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
 cd desktop
-go mod download
+go mod tidy
 wails3 generate bindings
 go run .
 ```
