@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -27,12 +27,29 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - name: Download Go modules
         working-directory: desktop
         run: go mod download
+      - name: Generate frontend bindings
+        working-directory: desktop
+        run: wails3 generate bindings
       - name: Test desktop module
         working-directory: desktop
         run: go test ./...
+      - name: Vet backend
+        working-directory: desktop
+        run: go vet ./backend
+      - name: Cross-compile backend for Windows
+        working-directory: desktop
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: "0"
+        run: go test -c -o /tmp/nethernet-backend.test.exe ./backend
       - name: Build Linux desktop app
         working-directory: desktop
+        env:
+          CGO_ENABLED: "1"
         run: go build -trimpath -o /tmp/nethernet-desktop .
