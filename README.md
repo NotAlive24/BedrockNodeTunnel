@@ -1,59 +1,126 @@
-# ⚡ Bedrock Node Tunnel (Open-Source Client)
+# Bedrock Node Tunnel — Open-Source Client
 
-![Bedrock Node Tunnel](logo.jpg)
+**Bedrock Node Tunnel** is a cross-platform Minecraft Bedrock Dedicated Server (\`transport=nethernet\`) TCP/UDP tunneling client. It lets you host a Bedrock server behind CGNAT, Starlink, or restrictive routers without a proxy such as WaterdogPE or Geyser.
 
-**Bedrock Node Tunnel** is a 100% Vanilla Minecraft Bedrock Dedicated Server (`transport=nethernet`) WebRTC UDP + TCP tunneling client. Host your Bedrock server behind Starlink, CGNAT, or strict routers without WaterdogPE, Geyser, or wiped player XUIDs/inventories.
+- Website and dashboard: https://bedrocknode.net
+- Community: https://discord.gg/Fcq2yCjQnV
+- Source: https://github.com/NotAlive24/BedrockNodeTunnel
 
-🌐 **Get Your Free Tunnel & Ports:** [https://bedrocknode.net](https://bedrocknode.net)  
-💬 **Join Our Discord:** [https://discord.gg/Fcq2yCjQnV](https://discord.gg/Fcq2yCjQnV)
+## Supported platforms
 
----
+| Platform | Architecture | Release asset |
+|---|---|---|
+| Windows | x64 | \`nethernet-client-windows-amd64.exe\` |
+| Windows | ARM64 | \`nethernet-client-windows-arm64.exe\` |
+| Linux | x86_64 | \`nethernet-client-linux-amd64\` |
+| Linux | ARM64 | \`nethernet-client-linux-arm64\` |
+| Debian / Ubuntu | amd64, arm64 | \`.deb\` packages |
+| Arch Linux | x86_64, aarch64 | \`PKGBUILD\` + source tarball |
 
-## 🔍 Why Is This Repository Open-Source?
-We believe server hosts should never have to run mystery `.exe` files on their machines. This repository contains the complete source code (`client.go`) for `nethernet-client.exe`:
-* **Zero File or System Access:** Only forwards traffic between the Bedrock Node Tunnel relay (`51.222.142.179:7000`) and your local Bedrock server (`127.0.0.1:19132` + local WebRTC UDP ports).
-* **Single Official Dependency:** Uses only the standard Go library and `github.com/hashicorp/yamux`.
+The Go client uses the same networking implementation on Windows and Linux. Release builds are statically linked where supported (\`CGO_ENABLED=0\`).
 
----
+## Install on Linux
 
-## 🚀 Option 1: Quick Start (Pre-Built Windows `.exe`)
-1. Download `nethernet-client.exe` from [https://bedrocknode.net](https://bedrocknode.net) (or the Releases tab).
-2. Double-click `nethernet-client.exe`.
-   * *Note: If Windows SmartScreen says "Windows protected your PC", click **More info** -> **Run anyway**.*
-3. Click the Claim Link shown in the console to link the tunnel to your free account at `bedrocknode.net`.
-4. Copy the 4 `server.properties` lines shown on your dashboard into your Bedrock Dedicated Server and restart `bedrock_server.exe`.
+The installer detects Linux and CPU architecture, downloads the matching latest release, verifies its SHA-256 checksum, and installs the binary to \`~/.local/bin\`.
 
----
+\`\`\`bash
+curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash
+\`\`\`
 
-## 🛠️ Option 2: Build or Run From Source Yourself (No `.exe` Download Needed)
-If you prefer to compile the client yourself or avoid Windows Defender `.exe` warnings:
+The installer supports install, update, and uninstall:
 
-1. Install [Go for Windows](https://go.dev/dl/).
-2. Download or clone this repository (`client.go`, `go.mod`, `go.sum`).
-3. Open PowerShell in the folder and run:
-   ```powershell
-   go run client.go
-   ```
+\`\`\`bash
+bash install.sh install
+bash install.sh update
+bash install.sh uninstall
+\`\`\`
 
----
+To remove the saved tunnel token and region configuration as well:
 
-## 📦 Prebuilt releases (Debian/Ubuntu and Arch Linux)
+\`\`\`bash
+bash install.sh uninstall --purge-data
+\`\`\`
 
-Download the files from the [Releases](../../releases) page. On the first run the client prints a **Claim Link** (and opens it in your browser when a desktop is available). The tunnel token is saved automatically in `~/.config/bedrocknode-tunnel/`.
+The default installation directory is \`~/.local/bin\`. Override it with \`BNT_INSTALL_DIR=/your/path\`. The installer creates a per-user systemd service when systemd is available; enable it after claiming a tunnel with:
 
-**Debian / Ubuntu / Raspberry Pi OS:**
-```bash
-sudo apt install ./bedrocknode-tunnel_1.0_amd64.deb    # use the arm64 file on ARM
-nethernet-client                                       # first run: claim your tunnel
-systemctl --user enable --now bedrocknode-tunnel       # keep it running in the background
-loginctl enable-linger "$USER"                         # start at boot without logging in
-```
+\`\`\`bash
+systemctl --user enable --now bedrocknode-tunnel.service
+\`\`\`
 
-**Arch Linux:** download `PKGBUILD` and `bedrocknode-tunnel-1.0.tar.gz` into one folder, then:
-```bash
-makepkg -si
-```
+## Install on Windows
 
-Useful flags: `-version` prints the version, `-reset-token` forgets the saved token and claims a new one, `-token <value>` skips the claim step. See `man nethernet-client` for all options.
+Use PowerShell (Windows 10/11):
 
-Windows users: use Option 1 or 2 above for now.
+\`\`\`powershell
+irm https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.ps1 -OutFile install.ps1
+.\\install.ps1
+\`\`\`
+
+The PowerShell installer detects x64 or ARM64, downloads the matching \`.exe\`, verifies its SHA-256 checksum, installs it under \`%LOCALAPPDATA%\\Programs\\BedrockNodeTunnel\`, and adds that directory to your user PATH.
+
+Update or uninstall:
+
+\`\`\`powershell
+.\\install.ps1 -Action update
+.\\install.ps1 -Action uninstall
+\`\`\`
+
+To also delete the saved token and node configuration:
+
+\`\`\`powershell
+.\\install.ps1 -Action uninstall -PurgeData
+\`\`\`
+
+The Bash installer also detects Git Bash/MSYS/Cygwin on Windows and delegates to the PowerShell installer. For native Windows use, PowerShell is recommended.
+
+## First run
+
+1. Start the Bedrock Dedicated Server locally.
+2. Run \`nethernet-client\` in a terminal.
+3. On first run, the client prints a claim link and opens it in your browser when a desktop session is available.
+4. Claim the tunnel in the Bedrock Node Tunnel dashboard.
+5. Copy the connection settings shown by the dashboard into your BDS \`server.properties\`.
+
+The client stores its token and selected region in the user's configuration directory. Updating or uninstalling the binary does not remove this data unless you explicitly request a purge.
+
+## Useful options
+
+\`\`\`text
+-version                 Print the client version
+-node <US|BR|ASIA|host>  Select a region or custom node
+-control <host:port>     Set the relay control address
+-web <URL>               Set the dashboard URL
+-token <value>           Use a supplied tunnel token
+-reset-token             Forget the saved token and claim a new tunnel
+-local-http <host:port>  Local Bedrock TCP target (default 127.0.0.1:19132)
+-local-udp-ip <IP>       Local IP for Bedrock UDP (auto-detected when empty)
+-local-udp-port <port>   Fallback local UDP port (default 47334)
+\`\`\`
+
+## Build from source
+
+Requires Go 1.21 or newer:
+
+\`\`\`bash
+go test ./...
+go run .
+\`\`\`
+
+Build a single target manually:
+
+\`\`\`bash
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o nethernet-client.exe .
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o nethernet-client .
+\`\`\`
+
+Build all release artifacts (Windows x64/ARM64, Linux x86_64/ARM64, Debian packages, and Arch packaging):
+
+\`\`\`bash
+go run ./tools/release -version 1.2 -out dist -targets deb,arch,linux,windows
+\`\`\`
+
+GitHub Actions runs tests and cross-compilation checks on pushes and pull requests. Pushing a tag such as \`v1.2\` builds and publishes the release assets automatically.
+
+## Security and scope
+
+The client forwards traffic between the Bedrock Node Tunnel relay and the local Bedrock server. It does not modify the Minecraft world or server files. The tunnel token is stored in the user's configuration directory; keep that file private.
