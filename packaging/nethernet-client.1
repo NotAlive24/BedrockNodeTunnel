@@ -1,0 +1,46 @@
+.TH NETHERNET-CLIENT 1 "November 2026" "bedrocknode-tunnel" "User Commands"
+.SH NAME
+nethernet-client \- Bedrock Node Tunnel client
+.SH SYNOPSIS
+.B nethernet-client
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+Connects a local Minecraft Bedrock Dedicated Server to the Bedrock Node Tunnel
+relay so that players can join without port forwarding.
+On the first run the client prints a claim link, waits until the tunnel is
+claimed in the web dashboard, and saves the resulting token for later runs.
+.SH OPTIONS
+.TP
+.BI \-token " TOKEN"
+Tunnel token. When omitted, the saved token is used, or a new tunnel is claimed.
+.TP
+.B \-reset\-token
+Delete the saved token and claim a new tunnel.
+.TP
+.BI \-control " HOST:PORT"
+Relay control address.
+.TP
+.BI \-web " URL"
+Web dashboard URL used for claiming a tunnel.
+.TP
+.BI \-local\-http " HOST:PORT"
+Local Bedrock TCP target (default 127.0.0.1:19132).
+.TP
+.BI \-local\-udp\-ip " IP"
+Local IP used for Bedrock UDP traffic. Detected automatically when empty.
+.TP
+.BI \-local\-udp\-port " PORT"
+Fallback local UDP port (default 47334).
+.TP
+.B \-version
+Print the version and exit.
+.SH FILES
+.TP
+.I ~/.config/bedrocknode-tunnel/bedrocknode-token.txt
+Saved tunnel token.
+.SH SERVICE
+A systemd user unit is installed. Claim a tunnel once by running
+.B nethernet-client
+in a terminal, then run
+.B systemctl \-\-user enable \-\-now bedrocknode-tunnel
+to keep it running in the background.
