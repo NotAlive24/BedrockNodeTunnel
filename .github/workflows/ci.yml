@@ -28,6 +28,9 @@ jobs:
       - name: Run vet
         run: go vet ./...
 
+      - name: Smoke-test release packaging
+        run: go run ./tools/release -version 1.0 -out /tmp/bnt-release -targets deb,arch,linux,windows
+
       - name: Cross-compile Linux and Windows
         shell: bash
         run: |
