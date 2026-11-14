@@ -53,7 +53,7 @@ Use PowerShell (Windows 10/11):
 
 ```powershell
 irm https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.ps1 -OutFile install.ps1
-.\install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
 The PowerShell installer detects x64 or ARM64, downloads the matching `.exe`, verifies its SHA-256 checksum, installs it under `%LOCALAPPDATA%\Programs\BedrockNodeTunnel`, and adds that directory to your user PATH.
