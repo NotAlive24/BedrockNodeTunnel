@@ -43,3 +43,11 @@ jobs:
               -ldflags "-s -w -X main.version=ci" \
               -o "/tmp/bnt-cross-build/nethernet-client-$goos-$goarch$suffix" .
           done
+
+      - name: Upload cross-platform binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: nethernet-client-cross-platform
+          path: /tmp/bnt-cross-build/*
+          if-no-files-found: error
+          retention-days: 14

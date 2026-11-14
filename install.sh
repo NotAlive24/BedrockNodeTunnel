@@ -64,9 +64,8 @@ if [[ "$PLATFORM" == "windows" ]]; then
 
   tmp_dir="$(mktemp -d)"
   trap 'rm -rf "$tmp_dir"' EXIT
-  script_path="${BASH_SOURCE[0]:-}"
-  if [[ -n "$script_path" && -f "$script_path" ]]; then
-    script_dir="$(cd "$(dirname "$script_path")" 2>/dev/null && pwd)"
+  script_dir="$(cd "$(dirname "$0")" 2>/dev/null && pwd || pwd)"
+  if [[ -f "$script_dir/install.ps1" ]]; then
     cp "$script_dir/install.ps1" "$tmp_dir/install.ps1"
   else
     download "$RAW_BASE/install.ps1" "$tmp_dir/install.ps1"
