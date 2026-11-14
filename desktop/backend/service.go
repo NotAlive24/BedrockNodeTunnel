@@ -24,12 +24,12 @@ const legacyUnit = "bedrocknode-tunnel.service"
 var tokenRE = regexp.MustCompile("(?i)(token[=: ]+)[^\\s&]+")
 
 type Settings struct {
- ProfileName string ``json:"profileName"``
- ClientPath string ``json:"clientPath"``
+ ProfileName string `json:"profileName"``
+ ClientPath string `json:"clientPath"``
  Node string `json:"node"`
  ControlAddr string `json:"controlAddr"`
  WebURL string `json:"webUrl"`
- LocalTCP string ``json:"localTcp"``
+ LocalTCP string `json:"localTcp"``
  LocalUDPIP string `json:"localUdpIp"`
  LocalUDPPort int `json:"localUdpPort"`
  Theme string `json:"theme"`
@@ -37,8 +37,8 @@ type Settings struct {
 }
 type LogEntry struct { Time string `json:"time"`; Level string `json:"level"`; Message string `json:"message"` }
 type Snapshot struct {
- State string `json:"state"`; Message string `json:"message"`; ClientPath string ``json:"clientPath"``
- ProfileName string ``json:"profileName"``; Node string `json:"node"`; LocalTCP string ``json:"localTcp"``; StartedAt string `json:"startedAt"`
+ State string `json:"state"`; Message string `json:"message"`; ClientPath string `json:"clientPath"``
+ ProfileName string `json:"profileName"``; Node string `json:"node"`; LocalTCP string `json:"localTcp"``; StartedAt string `json:"startedAt"`
  BackgroundSupported bool `json:"backgroundSupported"`; BackgroundInstalled bool `json:"backgroundInstalled"`
  BackgroundEnabled bool `json:"backgroundEnabled"`; BackgroundActive bool `json:"backgroundActive"`
  LegacyServiceActive bool `json:"legacyServiceActive"`; LegacyServiceEnabled bool `json:"legacyServiceEnabled"`
