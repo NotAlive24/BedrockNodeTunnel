@@ -22,9 +22,21 @@ import (
 
 const unitName = "nethernet-desktop-tunnel.service"
 const legacyUnit = "bedrocknode-tunnel.service"
+const windowsTaskName = "Nethernet Desktop Tunnel"
 var tokenRE = regexp.MustCompile("(?i)(token[=: ]+)[^\\s&]+")
 
+type ConnectionProfile struct {
+ Name string `json:"name"`
+ ClientPath string `json:"clientPath"`
+ Node string `json:"node"`
+ ControlAddr string `json:"controlAddr"`
+ WebURL string `json:"webUrl"`
+ LocalTCP string `json:"localTcp"`
+ LocalUDPIP string `json:"localUdpIp"`
+ LocalUDPPort int `json:"localUdpPort"`
+}
 type Settings struct {
+ Profiles []ConnectionProfile `json:"profiles,omitempty"`
  ProfileName string `json:"profileName"`
  ClientPath string `json:"clientPath"`
  Node string `json:"node"`
@@ -67,12 +79,21 @@ type Service struct {
 func defaults() Settings { return Settings{ProfileName:"Default profile",LocalTCP:"127.0.0.1:19132",LocalUDPPort:47334,Theme:"dark",Accent:"cyan",CloseToTray:true} }
 func NewService() *Service {
  s:=&Service{settings:defaults(),state:"stopped",message:"The tunnel is not running."}
+ s.settings.Profiles=[]ConnectionProfile{profileFromSettings(s.settings)}
  p,e:=settingsPath(); if e!=nil{s.loadWarning=e.Error();return s}
  b,e:=os.ReadFile(p);if errors.Is(e,os.ErrNotExist){return s};if e!=nil{s.loadWarning=e.Error();return s}
  var v Settings;if e=json.Unmarshal(b,&v);e!=nil{s.loadWarning=e.Error();return s}
- v,e=validate(v);if e!=nil{s.loadWarning=e.Error();return s};s.settings=v;return s
+ v,e=validate(v);if e!=nil{s.loadWarning=e.Error();return s};if len(v.Profiles)==0{v.Profiles=[]ConnectionProfile{profileFromSettings(v)}}else{v.Profiles=upsertProfile(v.Profiles,profileFromSettings(v))};s.settings=v;return s
 }
-func (s *Service) GetSettings() Settings { s.mu.Lock();defer s.mu.Unlock();return s.settings }
+func cloneProfiles(items []ConnectionProfile) []ConnectionProfile { return append([]ConnectionProfile(nil),items...) }
+func profileFromSettings(v Settings) ConnectionProfile { return ConnectionProfile{Name:v.ProfileName,ClientPath:v.ClientPath,Node:v.Node,ControlAddr:v.ControlAddr,WebURL:v.WebURL,LocalTCP:v.LocalTCP,LocalUDPIP:v.LocalUDPIP,LocalUDPPort:v.LocalUDPPort} }
+func applyProfile(v Settings,p ConnectionProfile) Settings { v.ProfileName=p.Name;v.ClientPath=p.ClientPath;v.Node=p.Node;v.ControlAddr=p.ControlAddr;v.WebURL=p.WebURL;v.LocalTCP=p.LocalTCP;v.LocalUDPIP=p.LocalUDPIP;v.LocalUDPPort=p.LocalUDPPort;return v }
+func upsertProfile(items []ConnectionProfile,p ConnectionProfile) []ConnectionProfile { out:=cloneProfiles(items);for i:=range out{if strings.EqualFold(out[i].Name,p.Name){out[i]=p;return out}};return append(out,p) }
+func (s *Service) GetSettings() Settings { s.mu.Lock();defer s.mu.Unlock();v:=s.settings;v.Profiles=cloneProfiles(v.Profiles);return v }
+func (s *Service) GetProfiles() []ConnectionProfile { s.mu.Lock();defer s.mu.Unlock();return cloneProfiles(s.settings.Profiles) }
+func (s *Service) SaveProfile(name string,v Settings)(Settings,error) { name=strings.TrimSpace(name);if name==""{return Settings{},errors.New("profile name is required")};if strings.ContainsAny(name,"\\x00\\r\\n"){return Settings{},errors.New("profile name contains invalid characters")};s.mu.Lock();if len(v.Profiles)==0{v.Profiles=cloneProfiles(s.settings.Profiles)};s.mu.Unlock();v.ProfileName=name;return s.SaveSettings(v) }
+func (s *Service) SwitchProfile(name string)(Settings,error) { s.mu.Lock();v:=s.settings;profiles:=cloneProfiles(v.Profiles);s.mu.Unlock();for _,p:=range profiles{if strings.EqualFold(p.Name,name){v=applyProfile(v,p);v.Profiles=profiles;return s.SaveSettings(v)}};return Settings{},fmt.Errorf("profile %q not found",name) }
+func (s *Service) DeleteProfile(name string)([]ConnectionProfile,error) { s.mu.Lock();v:=s.settings;profiles:=cloneProfiles(v.Profiles);s.mu.Unlock();if len(profiles)<=1{return profiles,errors.New("the last connection profile cannot be deleted")};index:=-1;for i,p:=range profiles{if strings.EqualFold(p.Name,name){index=i;break}};if index<0{return profiles,fmt.Errorf("profile %q not found",name)};profiles=append(profiles[:index],profiles[index+1:]...);if strings.EqualFold(v.ProfileName,name){v=applyProfile(v,profiles[0])};v.Profiles=profiles;saved,e:=s.SaveSettings(v);if e!=nil{return profiles,e};return saved.Profiles,nil }
 func validate(v Settings)(Settings,error) {
  d:=defaults();v.ProfileName=strings.TrimSpace(v.ProfileName);if v.ProfileName==""{v.ProfileName=d.ProfileName}
  v.ClientPath=strings.TrimSpace(v.ClientPath);v.Node=strings.TrimSpace(v.Node);v.ControlAddr=strings.TrimSpace(v.ControlAddr);v.WebURL=strings.TrimSpace(v.WebURL);v.LocalTCP=strings.TrimSpace(v.LocalTCP);v.LocalUDPIP=strings.TrimSpace(v.LocalUDPIP)
@@ -90,7 +111,14 @@ func validate(v Settings)(Settings,error) {
 }
 func settingsPath()(string,error){d,e:=os.UserConfigDir();if e!=nil{return "",e};return filepath.Join(d,"bedrocknode-tunnel","desktop.json"),nil}
 func saveJSON(p string,v any)error{if e:=os.MkdirAll(filepath.Dir(p),0700);e!=nil{return e};b,e:=json.MarshalIndent(v,"","  ");if e!=nil{return e};f,e:=os.CreateTemp(filepath.Dir(p),".desktop-*.tmp");if e!=nil{return e};name:=f.Name();defer os.Remove(name);if e=f.Chmod(0600);e==nil{_,e=f.Write(append(b,'\n'))};if e==nil{e=f.Sync()};ce:=f.Close();if e!=nil{return e};if ce!=nil{return ce};return os.Rename(name,p)}
-func (s *Service) SaveSettings(v Settings)(Settings,error){v,e:=validate(v);if e!=nil{return Settings{},e};p,e:=settingsPath();if e!=nil{return Settings{},e};if e=saveJSON(p,v);e!=nil{return Settings{},e};s.mu.Lock();s.settings=v;s.mu.Unlock();if runtime.GOOS=="linux"&&fileExists(unitPath()){if e=s.writeUnit(v);e!=nil{return v,e};if _,e=systemctl("daemon-reload");e!=nil{return v,e};s.mu.Lock();s.backgroundNeedsRestart=true;s.mu.Unlock()};return v,nil}
+func (s *Service) SaveSettings(v Settings)(Settings,error) {
+ validated,e:=validate(v);if e!=nil{return Settings{},e}
+ s.mu.Lock();if len(validated.Profiles)==0{validated.Profiles=cloneProfiles(s.settings.Profiles)};validated.Profiles=upsertProfile(validated.Profiles,profileFromSettings(validated));s.mu.Unlock()
+ path,e:=settingsPath();if e!=nil{return Settings{},e};if e=saveJSON(path,validated);e!=nil{return Settings{},e}
+ s.mu.Lock();s.settings=validated;s.mu.Unlock()
+ if backgroundInstalled(){if e=updateBackground(validated);e!=nil{return validated,e};s.mu.Lock();s.backgroundNeedsRestart=true;s.mu.Unlock()}
+ return validated,nil
+}
 func (s *Service) SetStartupOptions(enabled, startMinimized bool) (Settings, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -112,15 +140,15 @@ func (s *Service) SetStartupOptions(enabled, startMinimized bool) (Settings, err
 }
 
 func (s *Service) GetSnapshot() Snapshot {
- s.mu.Lock();v:=s.settings;running:=s.cmd!=nil||s.starting;x:=Snapshot{State:s.state,Message:s.message,ClientPath:s.clientPath,ProfileName:v.ProfileName,Node:v.Node,LocalTCP:v.LocalTCP,BackgroundSupported:runtime.GOOS=="linux"&&hasSystemctl(),AutostartSupported:runtime.GOOS=="linux"||runtime.GOOS=="windows",BackgroundNeedsRestart:s.backgroundNeedsRestart};if x.Node==""{x.Node="Automatic"};if !s.startedAt.IsZero(){x.StartedAt=s.startedAt.Format(time.RFC3339)};if x.ClientPath==""{x.ClientPath,_=resolve(v)};warn:=s.loadWarning;s.mu.Unlock()
- if x.BackgroundSupported{x.BackgroundInstalled=fileExists(unitPath());x.BackgroundEnabled=unitEnabled(unitName);x.BackgroundActive=unitActive(unitName);x.LegacyServiceActive=unitActive(legacyUnit);x.LegacyServiceEnabled=unitEnabled(legacyUnit)}
- if !running&&x.BackgroundActive{x.State="background-active";x.Message="Background client process is active; relay authentication is not confirmed by systemd."}else if !running&&warn!=""{x.Message=warn};return x
+ s.mu.Lock();v:=s.settings;running:=s.cmd!=nil||s.starting;x:=Snapshot{State:s.state,Message:s.message,ClientPath:s.clientPath,ProfileName:v.ProfileName,Node:v.Node,LocalTCP:v.LocalTCP,BackgroundSupported:backgroundSupported(),AutostartSupported:runtime.GOOS=="linux"||runtime.GOOS=="windows",BackgroundNeedsRestart:s.backgroundNeedsRestart};if x.Node==""{x.Node="Automatic"};if !s.startedAt.IsZero(){x.StartedAt=s.startedAt.Format(time.RFC3339)};if x.ClientPath==""{x.ClientPath,_=resolve(v)};warn:=s.loadWarning;s.mu.Unlock()
+ if x.BackgroundSupported{x.BackgroundInstalled=backgroundInstalled();x.BackgroundEnabled=backgroundEnabled();x.BackgroundActive=backgroundActive();x.LegacyServiceActive=legacyBackgroundActive();x.LegacyServiceEnabled=legacyBackgroundEnabled()}
+ if !running&&x.BackgroundActive{x.State="background-active";x.Message="Background client task is active; relay authentication is not confirmed by the service manager."}else if !running&&warn!=""{x.Message=warn};return x
 }
 func (s *Service) StartClient()(Snapshot,error) {
  s.mu.Lock();if s.cmd!=nil||s.starting{s.mu.Unlock();return s.GetSnapshot(),errors.New("client already running or starting")};v:=s.settings;s.starting=true;s.state="starting";s.message="Preparing client";s.mu.Unlock()
  fail:=func(e error)(Snapshot,error){s.mu.Lock();s.starting=false;s.state="error";s.message=e.Error();s.logLocked("error",e.Error());s.mu.Unlock();return s.GetSnapshot(),e}
- if runtime.GOOS=="linux"&&unitActive(unitName){return fail(errors.New("background service is active"))}
- if runtime.GOOS=="linux"&&(unitActive(legacyUnit)||unitEnabled(legacyUnit)){return fail(errors.New("bedrocknode-tunnel.service is active or enabled; disable it to avoid duplicate tunnels"))}
+ if backgroundActive(){return fail(errors.New("background tunnel is active; stop it before starting a foreground client"))}
+ if legacyBackgroundActive()||legacyBackgroundEnabled(){return fail(errors.New("an older Bedrock Node Tunnel background service is active or enabled; disable it to avoid duplicate tunnels"))}
  bin,e:=resolve(v);if e!=nil{return fail(e)};cmd:=exec.Command(bin,clientArgs(v)...);out,e:=cmd.StdoutPipe();if e!=nil{return fail(e)};er,e:=cmd.StderrPipe();if e!=nil{out.Close();return fail(e)};if e=cmd.Start();e!=nil{out.Close();er.Close();return fail(e)}
  done:=make(chan struct{});s.mu.Lock();s.cmd=cmd;s.done=done;s.starting=false;s.stopRequested=false;s.startedAt=time.Now();s.clientPath=bin;s.logs=nil;s.state="connecting";s.message="Client started; waiting for relay authentication.";s.mu.Unlock()
  var wg sync.WaitGroup;wg.Add(2);go func(){defer wg.Done();s.readLogs(out)}();go func(){defer wg.Done();s.readLogs(er)}();go func(){wg.Wait();e:=cmd.Wait();s.mu.Lock();defer s.mu.Unlock();defer close(done);if s.cmd==cmd{s.cmd=nil;s.done=nil;s.startedAt=time.Time{};if s.stopRequested{s.state="stopped";s.message="Client stopped."}else if e!=nil{s.state="error";s.message="Client exited: "+e.Error();s.logLocked("error",s.message)}else{s.state="stopped";s.message="Client exited."}}}();return s.GetSnapshot(),nil
@@ -136,10 +164,22 @@ func resolve(v Settings)(string,error){p:=v.ClientPath;if p==""{n:="nethernet-cl
 func unitPath()string{d,e:=os.UserConfigDir();if e!=nil{return ""};return filepath.Join(d,"systemd","user",unitName)}
 func renderUnit(bin string,args []string)string{all:=append([]string{bin},args...);for i,x:=range all{x=strings.ReplaceAll(x,"\\","\\\\");x=strings.ReplaceAll(x,"\"","\\\"");x=strings.ReplaceAll(x,"$","$$");x=strings.ReplaceAll(x,"%","%%");all[i]="\""+x+"\""};return "[Unit]\nDescription=Bedrock Node Tunnel client (Nethernet Desktop)\nAfter=default.target\n\n[Service]\nType=simple\nExecStart="+strings.Join(all," ")+"\nRestart=on-failure\nRestartSec=3\n\n[Install]\nWantedBy=default.target\n"}
 func (s *Service) writeUnit(v Settings)error{bin,e:=resolve(v);if e!=nil{return e};p:=unitPath();if e=os.MkdirAll(filepath.Dir(p),0700);e!=nil{return e};tmp:=p+".tmp";if e=os.WriteFile(tmp,[]byte(renderUnit(bin,clientArgs(v))),0600);e!=nil{return e};return os.Rename(tmp,p)}
-func (s *Service) EnableBackgroundService()(Snapshot,error){if runtime.GOOS!="linux"||!hasSystemctl(){return s.GetSnapshot(),errors.New("systemd user service unavailable")};s.mu.Lock();busy:=s.cmd!=nil||s.starting;v:=s.settings;s.mu.Unlock();if busy{return s.GetSnapshot(),errors.New("stop foreground client first")};if unitActive(legacyUnit)||unitEnabled(legacyUnit){return s.GetSnapshot(),errors.New("bedrocknode-tunnel.service conflict; stop and disable it first")};if !fileExists(unitPath()){if e:=s.writeUnit(v);e!=nil{return s.GetSnapshot(),e};if _,e:=systemctl("daemon-reload");e!=nil{return s.GetSnapshot(),e}};if _,e:=systemctl("enable","--now",unitName);e!=nil{return s.GetSnapshot(),e};return s.GetSnapshot(),nil}
-func (s *Service) RestartBackgroundService()(Snapshot,error){if runtime.GOOS!="linux"||!fileExists(unitPath()){return s.GetSnapshot(),errors.New("desktop background service not installed")};if unitActive(legacyUnit)||unitEnabled(legacyUnit){return s.GetSnapshot(),errors.New("bedrocknode-tunnel.service conflict; stop and disable it first")};if _,e:=systemctl("restart",unitName);e!=nil{return s.GetSnapshot(),e};s.mu.Lock();s.backgroundNeedsRestart=false;s.mu.Unlock();return s.GetSnapshot(),nil}
-func (s *Service) StopBackgroundService()(Snapshot,error){if _,e:=systemctl("stop",unitName);e!=nil&&unitActive(unitName){return s.GetSnapshot(),e};return s.GetSnapshot(),nil}
-func (s *Service) RemoveBackgroundService()(Snapshot,error){if _,e:=systemctl("disable","--now",unitName);e!=nil&&unitActive(unitName){return s.GetSnapshot(),e};if e:=os.Remove(unitPath());e!=nil&&!errors.Is(e,os.ErrNotExist){return s.GetSnapshot(),e};if _,e:=systemctl("daemon-reload");e!=nil{return s.GetSnapshot(),e};s.mu.Lock();s.backgroundNeedsRestart=false;s.mu.Unlock();return s.GetSnapshot(),nil}
+func (s *Service) EnableBackgroundService()(Snapshot,error) {
+ if !backgroundSupported(){return s.GetSnapshot(),errors.New("background tunnel management is unsupported on this system")}
+ s.mu.Lock();busy:=s.cmd!=nil||s.starting;v:=s.settings;s.mu.Unlock()
+ if busy{return s.GetSnapshot(),errors.New("stop the foreground client first")}
+ if legacyBackgroundActive()||legacyBackgroundEnabled(){return s.GetSnapshot(),errors.New("older bedrocknode-tunnel service conflict; stop and disable it first")}
+ if e:=installBackground(v);e!=nil{return s.GetSnapshot(),e};if e:=startBackground();e!=nil{return s.GetSnapshot(),e}
+ s.mu.Lock();s.backgroundNeedsRestart=false;s.mu.Unlock();return s.GetSnapshot(),nil
+}
+func (s *Service) RestartBackgroundService()(Snapshot,error) {
+ if !backgroundSupported()||!backgroundInstalled(){return s.GetSnapshot(),errors.New("desktop background service is not installed")}
+ if legacyBackgroundActive()||legacyBackgroundEnabled(){return s.GetSnapshot(),errors.New("older bedrocknode-tunnel service conflict; stop and disable it first")}
+ s.mu.Lock();v:=s.settings;s.mu.Unlock();if e:=updateBackground(v);e!=nil{return s.GetSnapshot(),e};if e:=restartBackground();e!=nil{return s.GetSnapshot(),e}
+ s.mu.Lock();s.backgroundNeedsRestart=false;s.mu.Unlock();return s.GetSnapshot(),nil
+}
+func (s *Service) StopBackgroundService()(Snapshot,error) { if !backgroundSupported(){return s.GetSnapshot(),errors.New("background tunnel management is unsupported")};if e:=stopBackground();e!=nil{return s.GetSnapshot(),e};return s.GetSnapshot(),nil }
+func (s *Service) RemoveBackgroundService()(Snapshot,error) { if !backgroundSupported(){return s.GetSnapshot(),errors.New("background tunnel management is unsupported")};if e:=removeBackground();e!=nil{return s.GetSnapshot(),e};s.mu.Lock();s.backgroundNeedsRestart=false;s.mu.Unlock();return s.GetSnapshot(),nil }
 func hasSystemctl()bool{_,e:=exec.LookPath("systemctl");return e==nil}
 func systemctl(args ...string)(string,error){p,e:=exec.LookPath("systemctl");if e!=nil{return "",errors.New("systemctl not found")};ctx,c:=context.WithTimeout(context.Background(),8*time.Second);defer c();a:=append([]string{"--user"},args...);b,e:=exec.CommandContext(ctx,p,a...).CombinedOutput();if e!=nil{return string(b),fmt.Errorf("systemctl %s: %w: %s",strings.Join(args," "),e,strings.TrimSpace(string(b)))};return string(b),nil}
 func unitActive(n string)bool{o,e:=systemctl("is-active",n);return e==nil&&strings.TrimSpace(o)=="active"}

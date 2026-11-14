@@ -4,17 +4,17 @@ A standalone desktop companion for the Bedrock Node Tunnel client. The desktop a
 
 ## Current implementation
 
-- Reads and saves a desktop connection profile in the user's configuration directory (`bedrocknode-tunnel/desktop.json`).
+- Reads and saves multiple named connection profiles in the user's configuration directory (`bedrocknode-tunnel/desktop.json`); existing single-profile settings are migrated automatically.
 - Starts and stops the existing CLI as a child process and streams its output into the UI.
 - Provides a cross-platform system tray menu to reopen the dashboard, start/stop the foreground client, and quit.
 - By default, closing the dashboard hides it to the tray; this can be disabled in Settings. Quitting explicitly exits the UI and stops only its foreground-managed client; a separately installed systemd background service remains independent.
 - Reports `connected` only after the client logs successful relay authentication. A process merely being alive is not treated as a confirmed tunnel.
 - Redacts token-like values from displayed and copied logs. The desktop profile does not store the tunnel token; the existing CLI token file remains authoritative.
-- On Linux, installs and manages a separate user-level systemd unit named `nethernet-desktop-tunnel.service`. It does not overwrite the existing `bedrocknode-tunnel.service`.
+- On Linux, installs and manages a separate user-level systemd unit named `nethernet-desktop-tunnel.service`. On Windows, installs a per-user Task Scheduler logon task (not a privileged Windows service). Neither overwrites the CLI or token store.
 - Detects an active or enabled legacy `bedrocknode-tunnel.service` and refuses to start a duplicate tunnel client.
 - Keeps the original CLI and root Go module untouched.
 
-The UI currently supports one saved connection profile. Named profile switching, Windows tunnel-service management, richer diagnostics and in-app updates are later milestones.
+Named profiles can be saved, switched and deleted from Connection. Windows background mode uses a Task Scheduler task in the current user account. Windows background log retrieval is not yet included; richer diagnostics and in-app updates remain future milestones.
 
 ## Development requirements
 
@@ -70,3 +70,6 @@ go vet ./backend
 wails3 generate bindings
 go build .
 ```
+
+
+On Windows, the background controls create a Task Scheduler task named **Nethernet Desktop Tunnel** with an **At log on** trigger. It runs the existing CLI as the current user with a limited run level, so it does not require administrator rights. Stop ends the running task instance but keeps its logon trigger; Remove deletes the task.

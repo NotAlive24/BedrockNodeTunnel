@@ -15,3 +15,15 @@ func TestStartupArguments(t *testing.T) {
 		t.Fatalf("unexpected normal startup arguments: %#v", got)
 	}
 }
+
+func TestProfileUpsertAndApply(t *testing.T) {
+	base:=defaults()
+	profiles:=upsertProfile(nil,profileFromSettings(base))
+	alt:=profileFromSettings(base);alt.Name="Home server";alt.Node="ASIA";alt.LocalTCP="192.168.1.10:19132"
+	profiles=upsertProfile(profiles,alt)
+	if len(profiles)!=2 {t.Fatalf("expected two profiles, got %d",len(profiles))}
+	base=applyProfile(base,profiles[1])
+	if base.ProfileName!="Home server"||base.Node!="ASIA"||base.LocalTCP!="192.168.1.10:19132" {t.Fatalf("profile not applied: %#v",base)}
+	alt.Node="US";profiles=upsertProfile(profiles,alt)
+	if len(profiles)!=2||profiles[1].Node!="US" {t.Fatalf("profile not updated: %#v",profiles)}
+}
