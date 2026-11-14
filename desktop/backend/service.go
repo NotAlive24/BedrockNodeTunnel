@@ -6,6 +6,7 @@ import (
  "encoding/json"
  "errors"
  "fmt"
+ "io"
  "net"
  "net/url"
  "os"
@@ -24,21 +25,22 @@ const legacyUnit = "bedrocknode-tunnel.service"
 var tokenRE = regexp.MustCompile("(?i)(token[=: ]+)[^\\s&]+")
 
 type Settings struct {
- ProfileName string `json:"profileName"``
- ClientPath string `json:"clientPath"``
+ ProfileName string `json:"profileName"`
+ ClientPath string `json:"clientPath"`
  Node string `json:"node"`
  ControlAddr string `json:"controlAddr"`
  WebURL string `json:"webUrl"`
- LocalTCP string `json:"localTcp"``
+ LocalTCP string `json:"localTcp"`
  LocalUDPIP string `json:"localUdpIp"`
  LocalUDPPort int `json:"localUdpPort"`
  Theme string `json:"theme"`
  Accent string `json:"accent"`
+ CloseToTray bool `json:"closeToTray"`
 }
 type LogEntry struct { Time string `json:"time"`; Level string `json:"level"`; Message string `json:"message"` }
 type Snapshot struct {
- State string `json:"state"`; Message string `json:"message"`; ClientPath string `json:"clientPath"``
- ProfileName string `json:"profileName"``; Node string `json:"node"`; LocalTCP string `json:"localTcp"``; StartedAt string `json:"startedAt"`
+ State string `json:"state"`; Message string `json:"message"`; ClientPath string `json:"clientPath"`
+ ProfileName string `json:"profileName"`; Node string `json:"node"`; LocalTCP string `json:"localTcp"`; StartedAt string `json:"startedAt"`
  BackgroundSupported bool `json:"backgroundSupported"`; BackgroundInstalled bool `json:"backgroundInstalled"`
  BackgroundEnabled bool `json:"backgroundEnabled"`; BackgroundActive bool `json:"backgroundActive"`
  LegacyServiceActive bool `json:"legacyServiceActive"`; LegacyServiceEnabled bool `json:"legacyServiceEnabled"`
@@ -59,7 +61,7 @@ type Service struct {
  backgroundNeedsRestart bool
  loadWarning string
 }
-func defaults() Settings { return Settings{ProfileName:"Default profile",LocalTCP:"127.0.0.1:19132",LocalUDPPort:47334,Theme:"dark",Accent:"cyan"} }
+func defaults() Settings { return Settings{ProfileName:"Default profile",LocalTCP:"127.0.0.1:19132",LocalUDPPort:47334,Theme:"dark",Accent:"cyan",CloseToTray:true} }
 func NewService() *Service {
  s:=&Service{settings:defaults(),state:"stopped",message:"The tunnel is not running."}
  p,e:=settingsPath(); if e!=nil{s.loadWarning=e.Error();return s}
