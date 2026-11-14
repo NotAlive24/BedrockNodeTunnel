@@ -14,7 +14,7 @@ A standalone desktop companion for the Bedrock Node Tunnel client. The desktop a
 - Detects an active or enabled legacy `bedrocknode-tunnel.service` and refuses to start a duplicate tunnel client.
 - Keeps the original CLI and root Go module untouched.
 
-The UI currently supports one saved connection profile. Named profile switching, system tray, UI autostart, Windows background startup, richer diagnostics and in-app updates are later milestones.
+The UI currently supports one saved connection profile. Named profile switching, Windows tunnel-service management, richer diagnostics and in-app updates are later milestones.
 
 ## Development requirements
 
@@ -52,7 +52,13 @@ $XDG_CONFIG_HOME/systemd/user/nethernet-desktop-tunnel.service
 
 (or `~/.config/systemd/user/` when `XDG_CONFIG_HOME` is not set). It runs the existing client directly, without the desktop UI. It restarts on failure and uses the selected saved connection settings. After changing settings, restart the background service from the UI so the running process uses the new arguments.
 
-The service is user-scoped and does not require root. The app checks for the older `bedrocknode-tunnel.service` before starting another client; stop and disable that older service first if it is active or enabled. **Remove service** only removes the desktop-managed unit; it does not uninstall the CLI, delete the profile or remove the tunnel token.
+The service is user-scoped and does not require root. It runs `nethernet-client` directly, without launching the Wails UI, and starts at login once enabled. The app checks for the older `bedrocknode-tunnel.service` before starting another client; stop and disable that older service first if it is active or enabled. **Remove service** only removes the desktop-managed unit; it does not uninstall the CLI, delete the profile or remove the tunnel token.
+
+## Desktop autostart
+
+Settings → Desktop startup registers the graphical app at login. Linux uses the user's XDG autostart directory; Windows uses the current user's Run registry key. **Start minimized to the system tray** adds the `--background` argument, starting the tray process without showing the dashboard. This is separate from the Linux background tunnel service above: use that service when you want only the tunnel process running with no desktop UI.
+
+For manual tray-only launch, start the app with `--background`. A normal launch always opens the dashboard.
 
 ## Checks
 

@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"log"
+	"os"
 	"sync/atomic"
 
 	"github.com/NotAlive24/BedrockNodeTunnel/desktop/backend"
@@ -77,7 +78,9 @@ func main() {
 		}
 	})
 
-	window.Show()
+	startHidden := false
+	for _, arg := range os.Args[1:] { if arg == "--background" { startHidden = true; break } }
+	if !startHidden { window.Show() }
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}

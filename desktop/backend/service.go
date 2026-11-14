@@ -36,6 +36,8 @@ type Settings struct {
  Theme string `json:"theme"`
  Accent string `json:"accent"`
  CloseToTray bool `json:"closeToTray"`
+ LaunchAtLogin bool `json:"launchAtLogin"`
+ StartMinimized bool `json:"startMinimized"`
 }
 type LogEntry struct { Time string `json:"time"`; Level string `json:"level"`; Message string `json:"message"` }
 type Snapshot struct {
@@ -45,6 +47,7 @@ type Snapshot struct {
  BackgroundEnabled bool `json:"backgroundEnabled"`; BackgroundActive bool `json:"backgroundActive"`
  LegacyServiceActive bool `json:"legacyServiceActive"`; LegacyServiceEnabled bool `json:"legacyServiceEnabled"`
  BackgroundNeedsRestart bool `json:"backgroundNeedsRestart"`
+ AutostartSupported bool `json:"autostartSupported"`
 }
 type Service struct {
  mu sync.Mutex
@@ -88,8 +91,28 @@ func validate(v Settings)(Settings,error) {
 func settingsPath()(string,error){d,e:=os.UserConfigDir();if e!=nil{return "",e};return filepath.Join(d,"bedrocknode-tunnel","desktop.json"),nil}
 func saveJSON(p string,v any)error{if e:=os.MkdirAll(filepath.Dir(p),0700);e!=nil{return e};b,e:=json.MarshalIndent(v,"","  ");if e!=nil{return e};f,e:=os.CreateTemp(filepath.Dir(p),".desktop-*.tmp");if e!=nil{return e};name:=f.Name();defer os.Remove(name);if e=f.Chmod(0600);e==nil{_,e=f.Write(append(b,'\n'))};if e==nil{e=f.Sync()};ce:=f.Close();if e!=nil{return e};if ce!=nil{return ce};return os.Rename(name,p)}
 func (s *Service) SaveSettings(v Settings)(Settings,error){v,e:=validate(v);if e!=nil{return Settings{},e};p,e:=settingsPath();if e!=nil{return Settings{},e};if e=saveJSON(p,v);e!=nil{return Settings{},e};s.mu.Lock();s.settings=v;s.mu.Unlock();if runtime.GOOS=="linux"&&fileExists(unitPath()){if e=s.writeUnit(v);e!=nil{return v,e};if _,e=systemctl("daemon-reload");e!=nil{return v,e};s.mu.Lock();s.backgroundNeedsRestart=true;s.mu.Unlock()};return v,nil}
+func (s *Service) SetStartupOptions(enabled, startMinimized bool) (Settings, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.settings
+	next := old
+	next.LaunchAtLogin = enabled
+	next.StartMinimized = startMinimized
+	if err := configureAutostart(enabled, startMinimized); err != nil { return old, err }
+	path, err := settingsPath()
+	if err == nil { err = saveJSON(path, next) }
+	if err != nil {
+		if rollbackErr := configureAutostart(old.LaunchAtLogin, old.StartMinimized); rollbackErr != nil {
+			return old, fmt.Errorf("save startup settings: %w (also failed to restore previous autostart state: %v)", err, rollbackErr)
+		}
+		return old, err
+	}
+	s.settings = next
+	return next, nil
+}
+
 func (s *Service) GetSnapshot() Snapshot {
- s.mu.Lock();v:=s.settings;running:=s.cmd!=nil||s.starting;x:=Snapshot{State:s.state,Message:s.message,ClientPath:s.clientPath,ProfileName:v.ProfileName,Node:v.Node,LocalTCP:v.LocalTCP,BackgroundSupported:runtime.GOOS=="linux"&&hasSystemctl(),BackgroundNeedsRestart:s.backgroundNeedsRestart};if x.Node==""{x.Node="Automatic"};if !s.startedAt.IsZero(){x.StartedAt=s.startedAt.Format(time.RFC3339)};if x.ClientPath==""{x.ClientPath,_=resolve(v)};warn:=s.loadWarning;s.mu.Unlock()
+ s.mu.Lock();v:=s.settings;running:=s.cmd!=nil||s.starting;x:=Snapshot{State:s.state,Message:s.message,ClientPath:s.clientPath,ProfileName:v.ProfileName,Node:v.Node,LocalTCP:v.LocalTCP,BackgroundSupported:runtime.GOOS=="linux"&&hasSystemctl(),AutostartSupported:runtime.GOOS=="linux"||runtime.GOOS=="windows",BackgroundNeedsRestart:s.backgroundNeedsRestart};if x.Node==""{x.Node="Automatic"};if !s.startedAt.IsZero(){x.StartedAt=s.startedAt.Format(time.RFC3339)};if x.ClientPath==""{x.ClientPath,_=resolve(v)};warn:=s.loadWarning;s.mu.Unlock()
  if x.BackgroundSupported{x.BackgroundInstalled=fileExists(unitPath());x.BackgroundEnabled=unitEnabled(unitName);x.BackgroundActive=unitActive(unitName);x.LegacyServiceActive=unitActive(legacyUnit);x.LegacyServiceEnabled=unitEnabled(legacyUnit)}
  if !running&&x.BackgroundActive{x.State="background-active";x.Message="Background client process is active; relay authentication is not confirmed by systemd."}else if !running&&warn!=""{x.Message=warn};return x
 }
