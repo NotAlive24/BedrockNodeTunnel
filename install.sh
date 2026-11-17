@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-REPO="stonercraft420/BedrockNodeTunnel"
+REPO="NotAlive24/BedrockNodeTunnel"
 RAW_BASE="https://raw.githubusercontent.com/$REPO/main"
 RELEASE_BASE="https://github.com/$REPO/releases/latest/download"
 ACTION="install"
