@@ -6,7 +6,7 @@
 
 - 🌐 **Get Your Free Tunnel & Ports:** [https://bedrocknode.net](https://bedrocknode.net)
 - 💬 **Join Our Discord:** [https://discord.gg/Fcq2yCjQnV](https://discord.gg/Fcq2yCjQnV)
-- 💻 **Official Repository:** [https://github.com/stonercraft420/BedrockNodeTunnel](https://github.com/stonercraft420/BedrockNodeTunnel)
+- 💻 **Upstream Project:** [https://github.com/stonercraft420/BedrockNodeTunnel](https://github.com/stonercraft420/BedrockNodeTunnel)
 
 ---
 
@@ -28,16 +28,54 @@ We believe server hosts should never have to run mystery `.exe` files on their m
 
 ---
 
-## 🚀 Option 1: Windows Quick Start (Pre-Built `.exe` or PowerShell Installer)
+## 🐧 Option 1: Linux Quick Install (Ubuntu, Debian, Arch and other distros)
+
+Run this one-line command in a terminal:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash
+```
+
+The installer detects x86_64/amd64 or ARM64, downloads the matching latest Linux release from **this repository**, verifies it against `SHA256SUMS`, and installs it to `~/.local/bin/nethernet-client`. It does not require `sudo`.
+
+The installer preserves saved tunnel settings in `~/.config/bedrocknode-tunnel`. On systemd-based distributions, it also writes a per-user service unit; enable it with:
+
+```bash
+systemctl --user enable --now bedrocknode-tunnel.service
+```
+
+To update or uninstall, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- update
+curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- uninstall
+```
+
+To remove the saved token and configuration as well, explicitly pass `--purge-data`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- uninstall --purge-data
+```
+
+You can also use the Debian package attached to the [v1.2 release](https://github.com/NotAlive24/BedrockNodeTunnel/releases/tag/v1.2). From the directory containing the downloaded package, run `sudo apt install ./bedrocknode-tunnel_1.2_amd64.deb` (use the ARM64 package on ARM64 systems).
+
+---
+
+## 🪟 Option 2: Windows Quick Start (Pre-Built `.exe` or PowerShell Installer)
 
 ### Method A: Direct `.exe` Download
-1. Download `nethernet-client.exe` from [https://bedrocknode.net](https://bedrocknode.net) (or the [Releases](../../releases) tab).
-2. Double-click `nethernet-client.exe`.
-   * *Note: If Windows SmartScreen says "Windows protected your PC", click **More info** -> **Run anyway**.*
-3. Click the Claim Link shown in the console (or enter the 6-digit code) to link the tunnel to your free account at `bedrocknode.net`.
-4. Copy the 4 `server.properties` lines shown on your dashboard into your Bedrock Dedicated Server and restart `bedrock_server.exe`.
+1. Download `nethernet-client-windows-amd64.exe` (or the ARM64 build) from the [Releases](https://github.com/NotAlive24/BedrockNodeTunnel/releases) tab.
+2. Run the executable.
+3. Open the Claim Link shown in the console (or enter the 6-digit code) to link the tunnel to your free account at `bedrocknode.net`.
+4. Copy the `server.properties` lines shown on your dashboard into your Bedrock Dedicated Server and restart it.
 
-### Method B: One-Line PowerShell Installer (Windows 10/11)
+### Method B: PowerShell Installer (Windows 10/11)
+
+Download and run the installer from PowerShell:
+
 ```powershell
-irm [https://raw.githubusercontent.com/stonercraft420/BedrockNodeTunnel/main/install.ps1](https://raw.githubusercontent.com/stonercraft420/BedrockNodeTunnel/main/install.ps1) -OutFile install.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
+irm https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.ps1 -OutFile install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\install.ps1
+```
+
+The installer verifies the downloaded executable using the release's SHA-256 manifest and preserves saved tunnel settings during updates and uninstall unless `-PurgeData` is explicitly supplied.
