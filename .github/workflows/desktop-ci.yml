@@ -5,11 +5,13 @@ on:
     paths:
       - "desktop/**"
       - ".github/workflows/desktop-ci.yml"
+      - ".github/workflows/desktop-release.yml"
   push:
     branches: [main]
     paths:
       - "desktop/**"
       - ".github/workflows/desktop-ci.yml"
+      - ".github/workflows/desktop-release.yml"
 
 permissions:
   contents: read
