@@ -31,59 +31,59 @@ var ansiPattern = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
 var secretPattern = regexp.MustCompile("(?i)(token\\s*[:=]\\s*)[^\\s,;]+")
 
 type Profile struct {
-	ID           string \`json:"id"\`
-	Name         string \`json:"name"\`
-	Region       string \`json:"region"\`
-	LocalTCP     string \`json:"localTCP"\`
-	LocalUDPIP   string \`json:"localUDPIP"\`
-	LocalUDPPort int    \`json:"localUDPPort"\`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Region       string `json:"region"`
+	LocalTCP     string `json:"localTCP"`
+	LocalUDPIP   string `json:"localUDPIP"`
+	LocalUDPPort int    `json:"localUDPPort"`
 }
 
 type AppSettings struct {
-	EnginePath string \`json:"enginePath"\`
+	EnginePath string `json:"enginePath"`
 }
 
 type appConfig struct {
-	SchemaVersion int         \`json:"schemaVersion"\`
-	ActiveProfile string      \`json:"activeProfile"\`
-	Settings      AppSettings \`json:"settings"\`
-	Profiles      []Profile   \`json:"profiles"\`
+	SchemaVersion int         `json:"schemaVersion"`
+	ActiveProfile string      `json:"activeProfile"`
+	Settings      AppSettings `json:"settings"`
+	Profiles      []Profile   `json:"profiles"`
 }
 
 type LogEntry struct {
-	ID      int64  \`json:"id"\`
-	Time    string \`json:"time"\`
-	Level   string \`json:"level"\`
-	Message string \`json:"message"\`
+	ID      int64  `json:"id"`
+	Time    string `json:"time"`
+	Level   string `json:"level"`
+	Message string `json:"message"`
 }
 
 type DiagnosticResult struct {
-	Name    string \`json:"name"\`
-	Status  string \`json:"status"\`
-	Details string \`json:"details"\`
+	Name    string `json:"name"`
+	Status  string `json:"status"`
+	Details string `json:"details"`
 }
 
 type EngineInfo struct {
-	Path    string \`json:"path"\`
-	Version string \`json:"version"\`
-	Updated bool   \`json:"updated"\`
+	Path    string `json:"path"`
+	Version string `json:"version"`
+	Updated bool   `json:"updated"`
 }
 
 type AppSnapshot struct {
-	AppVersion          string   \`json:"appVersion"\`
-	EngineFound         bool     \`json:"engineFound"\`
-	EnginePath          string   \`json:"enginePath"\`
-	EngineVersion       string   \`json:"engineVersion"\`
-	Running             bool     \`json:"running"\`
-	BackgroundRunning   bool     \`json:"backgroundRunning"\`
-	BackgroundSupported bool     \`json:"backgroundSupported"\`
-	Mode                string   \`json:"mode"\`
-	ConnectionState     string   \`json:"connectionState"\`
-	Uptime              string   \`json:"uptime"\`
-	StartedAt           string   \`json:"startedAt"\`
-	LastError           string   \`json:"lastError"\`
-	ActiveProfile       Profile  \`json:"activeProfile"\`
-	Profiles            []Profile \`json:"profiles"\`
+	AppVersion          string   `json:"appVersion"`
+	EngineFound         bool     `json:"engineFound"`
+	EnginePath          string   `json:"enginePath"`
+	EngineVersion       string   `json:"engineVersion"`
+	Running             bool     `json:"running"`
+	BackgroundRunning   bool     `json:"backgroundRunning"`
+	BackgroundSupported bool     `json:"backgroundSupported"`
+	Mode                string   `json:"mode"`
+	ConnectionState     string   `json:"connectionState"`
+	Uptime              string   `json:"uptime"`
+	StartedAt           string   `json:"startedAt"`
+	LastError           string   `json:"lastError"`
+	ActiveProfile       Profile  `json:"activeProfile"`
+	Profiles            []Profile `json:"profiles"`
 }
 
 type AppService struct {
@@ -273,6 +273,11 @@ func inspectEngine(path string) (EngineInfo, error) {
 }
 
 func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
+	s.mu.RLock()
+	running := s.cmd != nil
+	s.mu.RUnlock()
+	background, _ := backgroundStatus()
+	if running || background { return EngineInfo{}, errors.New("stop the tunnel before installing or updating the engine") }
 	client := &http.Client{Timeout:90*time.Second}
 	req, err := http.NewRequest(http.MethodGet, releaseAPI, nil)
 	if err != nil { return EngineInfo{}, err }
@@ -282,11 +287,11 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK { return EngineInfo{}, fmt.Errorf("latest release lookup returned HTTP %d", resp.StatusCode) }
 	var release struct {
-		TagName string \`json:"tag_name"\`
+		TagName string `json:"tag_name"`
 		Assets []struct {
-			Name string \`json:"name"\`
-			URL string \`json:"browser_download_url"\`
-		} \`json:"assets"\`
+			Name string `json:"name"`
+			URL string `json:"browser_download_url"`
+		} `json:"assets"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&release); err != nil { return EngineInfo{}, fmt.Errorf("invalid release metadata: %w", err) }
 	arch := runtime.GOARCH
@@ -326,7 +331,13 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(tmp, 0755); err != nil { _ = os.Remove(tmp); return EngineInfo{}, err }
 	}
-	if err := os.Rename(tmp, dest); err != nil { _ = os.Remove(tmp); return EngineInfo{}, err }
+	backup := dest + ".previous"
+	_ = os.Remove(backup)
+	if _, statErr := os.Stat(dest); statErr == nil {
+		if err := os.Rename(dest, backup); err != nil { _ = os.Remove(tmp); return EngineInfo{}, fmt.Errorf("could not preserve existing engine before update: %w", err) }
+	}
+	if err := os.Rename(tmp, dest); err != nil { _ = os.Remove(tmp); _ = os.Rename(backup, dest); return EngineInfo{}, err }
+	_ = os.Remove(backup)
 	engine, err := inspectEngine(dest)
 	if err != nil { return EngineInfo{}, err }
 	s.mu.Lock(); s.config.Settings.EnginePath = dest; err = s.saveConfigLocked(); s.mu.Unlock()
