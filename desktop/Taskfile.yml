@@ -4,17 +4,8 @@ includes:
   linux: ./build/linux/Taskfile.yml
   windows: ./build/windows/Taskfile.yml
 
-vars:
-  APP_NAME: NethernetDesktop
-  GOOS: '{{.GOOS | default OS}}'
-
 tasks:
-  build:
-    summary: Build the desktop application for the current platform
-    cmds:
-      - task: '{{.GOOS}}:build'
-
   package:
-    summary: Build native installer packages for the current platform
+    summary: Package the desktop app for the current operating system
     cmds:
-      - task: '{{.GOOS}}:package'
+      - task: '{{OS}}:package'
