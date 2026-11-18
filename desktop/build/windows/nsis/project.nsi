@@ -13,8 +13,8 @@ VIAddVersionKey "ProductName" "Nethernet Desktop"
 
 ManifestDPIAware true
 !include "MUI.nsh"
-!define MUI_ICON "..\icon.ico"
-!define MUI_UNICON "..\icon.ico"
+!define MUI_ICON "..\\icon.ico"
+!define MUI_UNICON "..\\icon.ico"
 !define MUI_FINISHPAGE_NOAUTOCLOSE
 !define MUI_ABORTWARNING
 
@@ -26,8 +26,8 @@ ManifestDPIAware true
 !insertmacro MUI_LANGUAGE "English"
 
 Name "Nethernet Desktop"
-OutFile "..\..\..\bin\NethernetDesktop-installer.exe"
-InstallDir "$LOCALAPPDATA\Programs\Nethernet Desktop"
+OutFile "..\\..\\..\\bin\\NethernetDesktop-installer.exe"
+InstallDir "$LOCALAPPDATA\\Programs\\Nethernet Desktop"
 RequestExecutionLevel user
 ShowInstDetails show
 
@@ -40,16 +40,16 @@ Section "Install"
   !insertmacro wails.webview2runtime
   SetOutPath $INSTDIR
   !insertmacro wails.files
-  CreateDirectory "$SMPROGRAMS\Nethernet Desktop"
-  CreateShortcut "$SMPROGRAMS\Nethernet Desktop\Nethernet Desktop.lnk" "$INSTDIR\NethernetDesktop.exe"
-  CreateShortcut "$DESKTOP\Nethernet Desktop.lnk" "$INSTDIR\NethernetDesktop.exe"
+  CreateDirectory "$SMPROGRAMS\\Nethernet Desktop"
+  CreateShortcut "$SMPROGRAMS\\Nethernet Desktop\\Nethernet Desktop.lnk" "$INSTDIR\\NethernetDesktop.exe"
+  CreateShortcut "$DESKTOP\\Nethernet Desktop.lnk" "$INSTDIR\\NethernetDesktop.exe"
   !insertmacro wails.writeUninstaller
 SectionEnd
 
 Section "Uninstall"
   !insertmacro wails.setShellContext
   RMDir /r "$INSTDIR"
-  RMDir /r "$SMPROGRAMS\Nethernet Desktop"
-  Delete "$DESKTOP\Nethernet Desktop.lnk"
+  RMDir /r "$SMPROGRAMS\\Nethernet Desktop"
+  Delete "$DESKTOP\\Nethernet Desktop.lnk"
   !insertmacro wails.deleteUninstaller
 SectionEnd
