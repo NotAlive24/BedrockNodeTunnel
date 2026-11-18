@@ -224,8 +224,7 @@ func validateProfile(p Profile) error {
 	switch region {
 	case "", "AUTO", "US", "TX", "UK", "BR", "ASIA": return nil
 	default:
-		if strings.ContainsAny(region, " 	
-/") || len(region) > 255 { return errors.New("region must be AUTO, a known region code, or a host/IP without spaces") }
+		if strings.ContainsAny(region, " \\t\\r\\n/") || len(region) > 255 { return errors.New("region must be AUTO, a known region code, or a host/IP without spaces") }
 		return nil
 	}
 }
