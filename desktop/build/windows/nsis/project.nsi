@@ -1,5 +1,8 @@
 Unicode true
 
+!define WAILS_INSTALL_SCOPE "user"
+!define REQUEST_EXECUTION_LEVEL "user"
+!define PRODUCT_EXECUTABLE "NethernetDesktop.exe"
 !include "wails_tools.nsh"
 
 VIProductVersion "1.0.0.0"
@@ -28,7 +31,6 @@ ManifestDPIAware true
 Name "Nethernet Desktop"
 OutFile "..\\..\\..\\bin\\NethernetDesktop-installer.exe"
 InstallDir "$LOCALAPPDATA\\Programs\\Nethernet Desktop"
-RequestExecutionLevel user
 ShowInstDetails show
 
 Function .onInit
