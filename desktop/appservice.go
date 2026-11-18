@@ -224,8 +224,7 @@ func validateProfile(p Profile) error {
 	switch region {
 	case "", "AUTO", "US", "TX", "UK", "BR", "ASIA": return nil
 	default:
-		if strings.ContainsAny(region, " 	
-/") || len(region) > 255 { return errors.New("region must be AUTO, a known region code, or a host/IP without spaces") }
+		if strings.ContainsAny(region, " \\t\\r\\n/") || len(region) > 255 { return errors.New("region must be AUTO, a known region code, or a host/IP without spaces") }
 		return nil
 	}
 }
@@ -348,8 +347,7 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 }
 
 func checksumForAsset(manifest, asset string) string {
-	for _, line := range strings.Split(manifest, "
-") {
+	for _, line := range strings.Split(manifest, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 { continue }
 		if strings.TrimPrefix(fields[1], "*") == asset && len(fields[0]) == 64 {
