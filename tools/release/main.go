@@ -30,8 +30,8 @@ var templateFS embed.FS
 const (
 	pkgName           = "bedrocknode-tunnel"
 	binName           = "nethernet-client"
-	defaultMaintainer = "Nutcrustys420
-	defaultRepo = "[https://github.com/stonercraft420/BedrockNodeTunnel](https://github.com/stonercraft420/BedrockNodeTunnel)"
+	defaultMaintainer = "NotAlive24 <128290190+NotAlive24@users.noreply.github.com>"
+	defaultRepo       = "https://github.com/NotAlive24/BedrockNodeTunnel"
 	lintianOverride   = "bedrocknode-tunnel: statically-linked-binary [usr/bin/nethernet-client]\n"
 )
 
@@ -64,11 +64,11 @@ type tarEntry struct {
 func main() {
 	c := config{}
 	var targets string
-	flag.StringVar(&c.Version, "version", "1.1", "release version without a leading v")
+	flag.StringVar(&c.Version, "version", "1.3", "release version without a leading v")
 	flag.StringVar(&c.OutDir, "out", "dist", "output directory")
 	flag.StringVar(&c.Maintainer, "maintainer", envOr("BNT_MAINTAINER", defaultMaintainer), "maintainer as \"Name <email>\" (or set BNT_MAINTAINER)")
 	flag.StringVar(&c.URL, "repo", defaultRepo, "project URL used in package metadata and the PKGBUILD source")
-	flag.StringVar(&targets, "targets", "deb,arch,linux,windows", "comma-separated list of: deb, arch, linux, windows")
+	flag.StringVar(&targets, "targets", "deb,arch,windows", "comma-separated list of: deb, arch, windows")
 	flag.Parse()
 
 	c.URL = strings.TrimRight(c.URL, "/")
@@ -79,8 +79,8 @@ func main() {
 		if t == "" {
 			continue
 		}
-		if t != "deb" && t != "arch" && t != "linux" && t != "windows" {
-			log.Fatalf("unknown target %q, expected deb, arch, linux or windows", t)
+		if t != "deb" && t != "arch" && t != "windows" {
+			log.Fatalf("unknown target %q, expected deb, arch or windows", t)
 		}
 		c.Targets[t] = true
 	}
@@ -140,39 +140,47 @@ func run(c config) error {
 
 	var outputs []string
 
-	if c.Targets["linux"] {
-		for _, arch := range []string{"amd64", "arm64"} {
-			binaryPath := filepath.Join(c.OutDir, fmt.Sprintf("%s-linux-%s", binName, arch))
-			log.Printf("building linux/%s", arch)
-			if err := buildBinary("linux", arch, binaryPath, c.Version); err != nil {
-				return err
-			}
-			outputs = append(outputs, binaryPath)
-		}
-	}
-
 	if c.Targets["windows"] {
 		for _, arch := range []string{"amd64", "arm64"} {
-			exeName := fmt.Sprintf("%s-windows-%s.exe", binName, arch)
-			exePath := filepath.Join(c.OutDir, exeName)
-			log.Printf("building windows/%s", arch)
-			if err := buildBinary("windows", arch, exePath, c.Version); err != nil {
+			// Standalone unversioned binary required by install.ps1
+			rawExeName := fmt.Sprintf("%s-windows-%s.exe", binName, arch)
+			rawExePath := filepath.Join(c.OutDir, rawExeName)
+			log.Printf("building %s", rawExeName)
+			if err := buildBinary("windows", arch, rawExePath, c.Version); err != nil {
 				return err
 			}
-			outputs = append(outputs, exePath)
+			outputs = append(outputs, rawExePath)
+
+			// Keep versioned amd64 exe for manual downloads
+			if arch == "amd64" {
+				verExeName := fmt.Sprintf("%s-%s-windows-amd64.exe", binName, c.Version)
+				verExePath := filepath.Join(c.OutDir, verExeName)
+				b, err := os.ReadFile(rawExePath)
+				if err != nil {
+					return err
+				}
+				if err := os.WriteFile(verExePath, b, 0755); err != nil {
+					return err
+				}
+				outputs = append(outputs, verExePath)
+			}
 		}
 	}
 
 	if c.Targets["deb"] {
 		for _, arch := range []string{"amd64", "arm64"} {
-			bin := filepath.Join(work, binName+"-"+arch)
-			log.Printf("building linux/%s", arch)
-			if err := buildBinary("linux", arch, bin, c.Version); err != nil {
+			// Standalone Linux binary required by install.sh
+			rawBinName := fmt.Sprintf("%s-linux-%s", binName, arch)
+			rawBinPath := filepath.Join(c.OutDir, rawBinName)
+			log.Printf("building linux/%s (%s)", arch, rawBinName)
+			if err := buildBinary("linux", arch, rawBinPath, c.Version); err != nil {
 				return err
 			}
+			outputs = append(outputs, rawBinPath)
+
 			debPath := filepath.Join(c.OutDir, fmt.Sprintf("%s_%s_%s.deb", pkgName, c.Version, arch))
 			log.Printf("packaging %s", filepath.Base(debPath))
-			if err := writeDeb(c, arch, bin, debPath); err != nil {
+			if err := writeDeb(c, arch, rawBinPath, debPath); err != nil {
 				return err
 			}
 			outputs = append(outputs, debPath)
@@ -217,10 +225,6 @@ func run(c config) error {
 		fmt.Printf("  %s\n", filepath.Base(p))
 	}
 	fmt.Printf("\nUpload all of these to the GitHub release tagged v%s.\n", c.Version)
-	if c.Targets["arch"] {
-		fmt.Printf("Arch users: download PKGBUILD and %s into one folder, then run makepkg -si\n", filepath.Base(tarPath))
-		fmt.Println("Always upload the PKGBUILD and tarball from the same run, the PKGBUILD pins the tarball checksum.")
-	}
 	return nil
 }
 
