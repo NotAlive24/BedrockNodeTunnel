@@ -5,13 +5,14 @@ tasks:
     summary: Build Nethernet Desktop for Windows x64
     cmds:
       - go mod tidy
+      - go run ./tools/generate-icon
       - wails3 generate bindings
       - wails3 generate icons -input build/appicon.png -windowsfilename build/windows/icon.ico
       - cd build && wails3 generate syso -arch amd64 -icon windows/icon.ico -manifest windows/wails.exe.manifest -info windows/info.json -out ../wails_windows_amd64.syso
       - go build -tags production -trimpath -buildvcs=false -ldflags="-s -w -H windowsgui" -o bin/NethernetDesktop.exe .
 
   package:
-    summary: Create a Windows NSIS installer
+    summary: Create a per-user Windows NSIS installer
     deps:
       - build
     cmds:
