@@ -347,8 +347,7 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 }
 
 func checksumForAsset(manifest, asset string) string {
-	for _, line := range strings.Split(manifest, "
-") {
+	for _, line := range strings.Split(manifest, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 { continue }
 		if strings.TrimPrefix(fields[1], "*") == asset && len(fields[0]) == 64 {
