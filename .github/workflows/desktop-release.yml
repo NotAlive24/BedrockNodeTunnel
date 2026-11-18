@@ -1,0 +1,127 @@
+name: Nethernet Desktop Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "desktop-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-24.04
+            executable: NethernetDesktop
+            engine: nethernet-client
+            archive: tar.gz
+          - platform: windows-x64
+            os: windows-latest
+            executable: NethernetDesktop.exe
+            engine: nethernet-client.exe
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            desktop/go.mod
+
+      - name: Install Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+
+      - name: Resolve desktop dependencies
+        working-directory: desktop
+        run: go mod tidy
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+
+      - name: Generate frontend bindings
+        working-directory: desktop
+        run: wails3 generate bindings
+
+      - name: Test CLI
+        run: go test ./...
+
+      - name: Test desktop
+        working-directory: desktop
+        run: go test ./...
+
+      - name: Stage application and tunnel engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p stage
+          go build -trimpath -ldflags="-s -w" -o "stage/${{ matrix.executable }}" ./desktop
+          go build -trimpath -ldflags="-s -w" -o "stage/${{ matrix.engine }}" .
+          cat > stage/README.txt <<'EOF'
+          Nethernet Desktop Control Suite
+
+          This archive contains the desktop control application and the matching
+          Nethernet tunnel engine. Keep both files in the same directory.
+
+          Linux:
+          Requires GTK 4 and WebKitGTK 6.0 runtime libraries (Ubuntu 24.04+ /
+          Debian 13+ or equivalent). Run ./NethernetDesktop.
+
+          Windows:
+          Windows 10/11 with the Microsoft Edge WebView2 Runtime is required.
+          Run NethernetDesktop.exe.
+
+          The application stores profiles and settings in the current user's
+          configuration directory. Engine updates can also be managed in Settings.
+          EOF
+
+      - name: Create Linux archive
+        if: runner.os == 'Linux'
+        run: tar -C stage -czf "Nethernet-Desktop-${{ matrix.platform }}.tar.gz" .
+
+      - name: Create Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path stage/* -DestinationPath "Nethernet-Desktop-${{ matrix.platform }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nethernet-Desktop-${{ matrix.platform }}
+          path: Nethernet-Desktop-${{ matrix.platform }}.${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish desktop release assets
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Nethernet Desktop ${{ github.ref_name }}
+          generate_release_notes: true
+          files: dist/*
