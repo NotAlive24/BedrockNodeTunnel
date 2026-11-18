@@ -310,7 +310,7 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 	binaryData, err := download(assetURL, 100<<20)
 	if err != nil { return EngineInfo{}, fmt.Errorf("engine download failed: %w", err) }
 	if len(binaryData) == 0 || len(binaryData) > 100<<20 { return EngineInfo{}, errors.New("downloaded engine has an invalid size") }
-	checksumsURL := strings.TrimSuffix(assetURL, filepath.Base(assetURL)) + "SHA256SUMS"
+	checksumsURL := strings.TrimSuffix(assetURL, asset) + "SHA256SUMS"
 	checksumData, err := download(checksumsURL, 1<<20)
 	if err != nil { return EngineInfo{}, fmt.Errorf("could not download SHA256SUMS: %w", err) }
 	expected := checksumForAsset(string(checksumData), asset)
