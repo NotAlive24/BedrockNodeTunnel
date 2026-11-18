@@ -32,7 +32,7 @@ jobs:
           go run ./tools/release \
             -version "$version" \
             -out dist \
-            -targets deb,arch,linux,windows
+            -targets deb,arch,windows
 
       - name: Generate release checksums
         run: |
