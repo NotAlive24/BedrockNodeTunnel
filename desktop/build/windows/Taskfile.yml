@@ -18,5 +18,5 @@ tasks:
     deps:
       - build
     cmds:
-      - wails3 generate webview2bootstrapper -dir build/windows/nsis
-      - cd build/windows/nsis && makensis -DARG_WAILS_AMD64_BINARY=../../../bin/NethernetDesktop.exe project.nsi
+      - wails3 generate webview2bootstrapper -dir "{{.ROOT_DIR}}/build/windows/nsis"
+      - cd build/windows/nsis && makensis -DARG_WAILS_AMD64_BINARY="{{.ROOT_DIR}}\\{{.BIN_DIR}}\\NethernetDesktop.exe" project.nsi
