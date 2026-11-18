@@ -24,8 +24,9 @@ jobs:
           go-version: "1.26.x"
           cache-dependency-path: desktop/go.mod
       - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
-      - working-directory: desktop
-        run: go mod download
+      - name: Resolve desktop dependencies and generate go.sum
+        working-directory: desktop
+        run: go mod tidy
       - working-directory: desktop
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - name: Generate bindings
@@ -44,8 +45,9 @@ jobs:
         with:
           go-version: "1.26.x"
           cache-dependency-path: desktop/go.mod
-      - working-directory: desktop
-        run: go mod download
+      - name: Resolve desktop dependencies and generate go.sum
+        working-directory: desktop
+        run: go mod tidy
       - working-directory: desktop
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - name: Generate bindings
