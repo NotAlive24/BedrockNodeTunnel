@@ -19,5 +19,4 @@ tasks:
       - build
     cmds:
       - wails3 generate webview2bootstrapper -dir "{{.ROOT_DIR}}/build/windows/nsis"
-      - powershell -NoProfile -Command "if (!(Test-Path 'bin/NethernetDesktop.exe')) { throw 'Windows desktop executable missing: bin/NethernetDesktop.exe' }"
       - cd build/windows/nsis && makensis -DARG_WAILS_AMD64_BINARY="{{.ROOT_DIR}}\bin\NethernetDesktop.exe" project.nsi
