@@ -552,4 +552,4 @@ func controlAddress(region string) string {
 	return controls[strings.ToUpper(strings.TrimSpace(region))]
 }
 
-func (s *AppService) Shutdown() { _ = s.StopTunnel() }
+func (s *AppService) ServiceShutdown() error {\n\tactive, _ := backgroundStatus()\n\tif active { return nil }\n\treturn s.StopTunnel()\n}
