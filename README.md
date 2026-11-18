@@ -17,6 +17,14 @@ We believe server hosts should never have to run mystery `.exe` files on their m
 
 ## Supported Platforms
 
+## What's new in v1.3
+
+- **Raw UDP Fast-Lane:** carries Bedrock player UDP traffic over the raw UDP fast path.
+- **Multi-server TCP mapping:** supports mapped TCP streams that identify the target local TCP port.
+- **Network tuning:** configures TCP no-delay/keepalive and larger TCP/UDP socket buffers to improve tunnel throughput.
+- **Local UDP fallback candidates:** tries the configured LAN address and IPv4/IPv6 loopback targets.
+
+
 | Platform | Architecture | Release Asset |
 |---|---|---|
 | Windows | x64 | `nethernet-client-windows-amd64.exe` |
@@ -57,14 +65,14 @@ To remove the saved token and configuration as well, explicitly pass `--purge-da
 curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- uninstall --purge-data
 ```
 
-You can also use the Debian package attached to the [v1.2 release](https://github.com/NotAlive24/BedrockNodeTunnel/releases/tag/v1.2). From the directory containing the downloaded package, run `sudo apt install ./bedrocknode-tunnel_1.2_amd64.deb` (use the ARM64 package on ARM64 systems).
+You can also use the Debian package attached to the [v1.3 release](https://github.com/NotAlive24/BedrockNodeTunnel/releases/tag/v1.3). From the directory containing the downloaded package, run `sudo apt install ./bedrocknode-tunnel_1.3_amd64.deb` (use the ARM64 package on ARM64 systems).
 
 ---
 
 ## 🪟 Option 2: Windows Quick Start (Pre-Built `.exe` or PowerShell Installer)
 
 ### Method A: Direct `.exe` Download
-1. Download `nethernet-client-windows-amd64.exe` (or the ARM64 build) from the [Releases](https://github.com/NotAlive24/BedrockNodeTunnel/releases) tab.
+1. Download `nethernet-client-windows-amd64.exe` (or `nethernet-client-windows-arm64.exe`) from the [Releases](https://github.com/NotAlive24/BedrockNodeTunnel/releases) tab.
 2. Run the executable.
 3. Open the Claim Link shown in the console (or enter the 6-digit code) to link the tunnel to your free account at `bedrocknode.net`.
 4. Copy the `server.properties` lines shown on your dashboard into your Bedrock Dedicated Server and restart it.
