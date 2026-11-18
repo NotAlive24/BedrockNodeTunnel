@@ -1,7 +1,7 @@
 name: nethernet-desktop
-arch: ${GOARCH}
+arch: amd64
 platform: linux
-version: ${VERSION}
+version: 1.0.0
 section: net
 priority: optional
 maintainer: NotAlive24
