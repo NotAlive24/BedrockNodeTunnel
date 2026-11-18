@@ -1,24 +1,27 @@
 version: '3'
 
-vars:
-  APP_NAME: NethernetDesktop
-  ROOT_DIR: '{{.ROOT_DIR}}'
-
 tasks:
   build:
     summary: Build Nethernet Desktop for Linux
     cmds:
       - go mod tidy
+      - go run ./tools/generate-icon
       - wails3 generate bindings
+      - wails3 generate icons -input build/appicon.png -windowsfilename build/windows/icon.ico
       - mkdir -p bin build/linux
       - go build -tags production -trimpath -buildvcs=false -ldflags="-s -w" -o bin/NethernetDesktop .
+
+  generate:desktop:
+    summary: Generate the Linux desktop entry
+    cmds:
+      - wails3 generate .desktop -name "Nethernet Desktop" -exec "NethernetDesktop" -icon "nethernet-desktop" -outputfile "build/linux/NethernetDesktop.desktop" -categories "Network;Utility;"
 
   package:
     summary: Create AppImage, Debian and Arch Linux packages
     deps:
       - build
     cmds:
-      - wails3 generate .desktop -name "Nethernet Desktop" -exec "NethernetDesktop" -icon "NethernetDesktop" -outputfile "build/linux/NethernetDesktop.desktop" -categories "Network;Utility;"
+      - task: generate:desktop
       - mkdir -p build/linux/appimage
       - cp bin/NethernetDesktop build/linux/appimage/NethernetDesktop
       - cp build/appicon.png build/linux/appimage/NethernetDesktop.png
