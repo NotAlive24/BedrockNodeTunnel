@@ -4,6 +4,7 @@ tasks:
   build:
     summary: Build Nethernet Desktop for Windows x64
     cmds:
+      - wails3 update build-assets -name "NethernetDesktop" -config build/config.yml -dir build
       - go mod tidy
       - go run ./tools/generate-icon
       - mkdir -p build/darwin build/windows
