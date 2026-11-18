@@ -8,7 +8,7 @@ on:
       - ".github/workflows/desktop-release.yml"
       - ".github/workflows/desktop-native-release.yml"
   push:
-    branches: [main]
+    branches: [main, feat/desktop-native-installers]
     paths:
       - "desktop/**"
       - ".github/workflows/desktop-ci.yml"
