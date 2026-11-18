@@ -47,7 +47,10 @@ jobs:
       - working-directory: desktop
         run: go mod download
       - working-directory: desktop
-        run: go run github.com/wailsapp/wails/v3/cmd/wails3 generate bindings
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
+      - name: Generate bindings
+        working-directory: desktop
+        run: wails3 generate bindings
       - working-directory: desktop
         run: go test ./...
       - working-directory: desktop
