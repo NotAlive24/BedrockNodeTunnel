@@ -1,0 +1,27 @@
+version: '3'
+
+vars:
+  APP_NAME: NethernetDesktop
+  ROOT_DIR: '{{.ROOT_DIR}}'
+
+tasks:
+  build:
+    summary: Build Nethernet Desktop for Linux
+    cmds:
+      - go mod tidy
+      - wails3 generate bindings
+      - mkdir -p bin build/linux
+      - go build -tags production -trimpath -buildvcs=false -ldflags="-s -w" -o bin/NethernetDesktop .
+
+  package:
+    summary: Create AppImage, Debian and Arch Linux packages
+    deps:
+      - build
+    cmds:
+      - wails3 generate .desktop -name "Nethernet Desktop" -exec "NethernetDesktop" -icon "NethernetDesktop" -outputfile "build/linux/NethernetDesktop.desktop" -categories "Network;Utility;"
+      - mkdir -p build/linux/appimage
+      - cp bin/NethernetDesktop build/linux/appimage/NethernetDesktop
+      - cp build/appicon.png build/linux/appimage/NethernetDesktop.png
+      - cd build/linux/appimage && wails3 generate appimage -binary "NethernetDesktop" -icon "NethernetDesktop.png" -desktopfile "../NethernetDesktop.desktop" -outputdir "../../../bin" -builddir "{{.ROOT_DIR}}/build/linux/appimage/build"
+      - wails3 tool package -name "NethernetDesktop" -format deb -config build/linux/nfpm/nfpm.yaml -out bin
+      - wails3 tool package -name "NethernetDesktop" -format archlinux -config build/linux/nfpm/nfpm.yaml -out bin
