@@ -8,7 +8,7 @@ on:
       - ".github/workflows/desktop-release.yml"
       - ".github/workflows/desktop-native-release.yml"
   push:
-    branches: [main, feat/desktop-native-installers]
+    branches: [main]
     paths:
       - "desktop/**"
       - ".github/workflows/desktop-ci.yml"
@@ -65,7 +65,15 @@ jobs:
         working-directory: desktop
         run: go mod tidy
       - name: Install NSIS
-        run: choco install nsis -y
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          if (!(Test-Path (Join-Path $nsisPath "makensis.exe"))) {
+            throw "NSIS installation did not contain makensis.exe at $nsisPath"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisPath
+          & (Join-Path $nsisPath "makensis.exe") /VERSION
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - name: Generate bindings
