@@ -1,0 +1,28 @@
+version: '3'
+
+info:
+  companyName: "NotAlive24"
+  productName: "Nethernet Desktop"
+  productIdentifier: "net.bedrocknode.nethernet-desktop"
+  description: "Desktop control suite for Bedrock Node Tunnel"
+  copyright: "(c) 2026 NotAlive24"
+  comments: "Manage Bedrock Node Tunnel profiles, diagnostics and background service."
+  version: "1.0.0"
+
+dev_mode:
+  root_path: .
+  log_level: warn
+  debounce: 1000
+  ignore:
+    dir:
+      - .git
+      - bin
+      - build
+    file:
+      - .DS_Store
+      - .gitignore
+    watched_extension:
+      - "*.go"
+      - "*.js"
+      - "*.ts"
+    git_ignore: true

@@ -6,38 +6,52 @@ on:
       - "desktop/**"
       - ".github/workflows/desktop-ci.yml"
       - ".github/workflows/desktop-release.yml"
+      - ".github/workflows/desktop-native-release.yml"
   push:
     branches: [main]
     paths:
       - "desktop/**"
       - ".github/workflows/desktop-ci.yml"
       - ".github/workflows/desktop-release.yml"
+      - ".github/workflows/desktop-native-release.yml"
 
 permissions:
   contents: read
 
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
           cache-dependency-path: desktop/go.mod
-      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Install Linux desktop and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libfuse2t64 patchelf file wget curl
       - name: Resolve desktop dependencies and generate go.sum
         working-directory: desktop
         run: go mod tidy
-      - working-directory: desktop
+      - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - name: Generate bindings
         working-directory: desktop
         run: wails3 generate bindings
-      - working-directory: desktop
+      - name: Test desktop
+        working-directory: desktop
         run: go test ./...
-      - working-directory: desktop
-        run: go build -trimpath -o /tmp/nethernet-desktop .
+      - name: Build and package Linux formats
+        working-directory: desktop
+        run: wails3 task linux:package
+      - name: Verify Linux package outputs
+        working-directory: desktop
+        run: |
+          set -euo pipefail
+          test -n "$(find bin -maxdepth 1 -name '*.AppImage' -print -quit)"
+          test -n "$(find bin -maxdepth 1 -name '*.deb' -print -quit)"
+          test -n "$(find bin -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)"
 
   windows:
     runs-on: windows-latest
@@ -50,12 +64,30 @@ jobs:
       - name: Resolve desktop dependencies and generate go.sum
         working-directory: desktop
         run: go mod tidy
-      - working-directory: desktop
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          if (!(Test-Path (Join-Path $nsisPath "makensis.exe"))) {
+            throw "NSIS installation did not contain makensis.exe at $nsisPath"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisPath
+          & (Join-Path $nsisPath "makensis.exe") /VERSION
+      - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - name: Generate bindings
         working-directory: desktop
         run: wails3 generate bindings
-      - working-directory: desktop
+      - name: Test desktop
+        working-directory: desktop
         run: go test ./...
-      - working-directory: desktop
-        run: go build -trimpath -o $env:TEMP/nethernet-desktop.exe .
+      - name: Build Windows installer
+        working-directory: desktop
+        run: wails3 task windows:package
+      - name: Verify Windows installer
+        shell: pwsh
+        run: |
+          if (!(Test-Path "desktop/bin/NethernetDesktop-installer.exe")) {
+            throw "Expected NSIS installer was not created."
+          }

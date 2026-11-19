@@ -1,0 +1,11 @@
+version: '3'
+
+includes:
+  linux: ./build/linux/Taskfile.yml
+  windows: ./build/windows/Taskfile.yml
+
+tasks:
+  package:
+    summary: Package the desktop app for the current operating system
+    cmds:
+      - task: '{{OS}}:package'
