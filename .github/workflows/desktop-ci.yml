@@ -30,7 +30,7 @@ jobs:
       - name: Install Linux desktop and packaging dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libfuse2t64 patchelf file wget curl
+          sudo apt-get install -y build-essential pkg-config libfuse2t64 patchelf file wget curl
       - name: Resolve desktop dependencies and generate go.sum
         working-directory: desktop
         run: go mod tidy
