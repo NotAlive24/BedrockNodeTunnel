@@ -146,7 +146,11 @@ func newWebHandler(app *AppService, expectedHost string, frontend fs.FS, shutdow
 		results := app.RunDiagnostics()
 		writeAPIResponse(w, http.StatusOK, results)
 	}))
-	mux.HandleFunc("/api/logs", api.get(func() any {\n\t\tlogs := app.GetLogs()\n\t\tif logs == nil { return []LogEntry{} }\n\t\treturn logs\n\t}))
+	mux.HandleFunc("/api/logs", api.get(func() any {
+		logs := app.GetLogs()
+		if logs == nil { return []LogEntry{} }
+		return logs
+	}))
 	mux.HandleFunc("/api/logs/clear", api.method(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
 		app.ClearLogs()
 		writeAPIResponse(w, http.StatusOK, map[string]bool{"cleared": true})
