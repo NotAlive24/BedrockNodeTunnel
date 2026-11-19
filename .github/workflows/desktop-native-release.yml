@@ -56,6 +56,16 @@ jobs:
           cache-dependency-path: desktop/go.mod
       - name: Install NSIS
         run: choco install nsis -y
+      - name: Add NSIS to PATH
+        shell: pwsh
+        run: |
+          $nsisPath = Join-Path ${env:ProgramFiles(x86)} "NSIS"
+          $makensis = Join-Path $nsisPath "makensis.exe"
+          if (!(Test-Path $makensis)) {
+            throw "NSIS was installed but makensis.exe was not found at $makensis"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisPath
+          Write-Host "Added NSIS to PATH: $nsisPath"
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
       - name: Build Windows installer
