@@ -1,6 +1,6 @@
 # Nethernet Desktop Suite
 
-A native desktop control centre for the Bedrock Node Tunnel client. The CLI remains a separate, independently usable program.
+A local browser-based control centre for the Bedrock Node Tunnel client. The launcher binds only to 127.0.0.1 on an available port and opens the UI in the default browser. The CLI remains a separate, independently usable program. The CLI remains a separate, independently usable program.
 
 ## Features
 
@@ -15,7 +15,7 @@ A native desktop control centre for the Bedrock Node Tunnel client. The CLI rema
 
 ## Development
 
-Requirements: Go 1.26+, Wails v3.0.0. Linux builds need GTK4, WebKitGTK 6.0, GCC and pkg-config. Windows builds need the WebView2 runtime.
+Requirements: Go 1.26+, Wails CLI v3.0.0 for packaging helpers, and platform packaging tools. The running UI uses the system browser; it does not embed WebKit or require WebView2.
 
     go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
     cd desktop
@@ -24,7 +24,7 @@ Requirements: Go 1.26+, Wails v3.0.0. Linux builds need GTK4, WebKitGTK 6.0, GCC
     go test ./...
     go run .
 
-The frontend imports generated Wails bindings from frontend/bindings. Regenerate bindings after changing exported service methods.
+The frontend communicates with the local Go process through a same-origin JSON API.
 
 ## Configuration
 
