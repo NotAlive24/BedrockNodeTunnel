@@ -21,12 +21,4 @@ contents:
   - src: ./build/linux/NethernetDesktop.desktop
     dst: /usr/share/applications/nethernet-desktop.desktop
 
-depends:
-  - libgtk-4-1
-  - libwebkitgtk-6.0-4
-
-overrides:
-  archlinux:
-    depends:
-      - gtk4
-      - webkitgtk-6.0
+depends: []
