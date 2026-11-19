@@ -8,10 +8,10 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"os/exec"
-	"runtime"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -51,33 +51,26 @@ func runWebUI(app *AppService) error {
 		}
 		close(errCh)
 	}()
+
 	url := "http://" + address + "/"
 	log.Printf("Nethernet Desktop is available at %s", url)
 	if err := openBrowserURL(url); err != nil {
 		log.Printf("Could not open browser automatically: %v", err)
 		log.Printf("Open this address manually: %s", url)
 	}
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
 	select {
 	case err, ok := <-errCh:
 		if ok && err != nil {
 			return fmt.Errorf("local web server stopped: %w", err)
 		}
 		return nil
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(signals)
-	select {
 	case <-signals:
 		_ = app.ServiceShutdown()
-		ctxDone := make(chan struct{})
-		go func() {
-			_ = server.Close()
-			close(ctxDone)
-		}()
-		select {
-		case <-ctxDone:
-		case <-time.After(3 * time.Second):
-		}
+		_ = server.Close()
 		return nil
 	}
 }
@@ -94,5 +87,9 @@ func openBrowserURL(url string) error {
 	default:
 		return fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 	}
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() { _ = cmd.Wait() }()
+	return nil
 }
