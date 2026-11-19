@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -60,7 +63,11 @@ func runWebUI(app *AppService) error {
 			return fmt.Errorf("local web server stopped: %w", err)
 		}
 		return nil
-	case <-waitForInterrupt():
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	select {
+	case <-signals:
 		_ = app.ServiceShutdown()
 		ctxDone := make(chan struct{})
 		go func() {
