@@ -476,17 +476,23 @@ func candidateNodePaths() []string {
 
 func loadSavedToken() (string, string) {
 	for _, p := range candidateTokenPaths() {
-		if data, err := os.ReadFile(p); err == nil {
-			saved := strings.TrimSpace(string(data))
-			if isValidToken(saved) {
-				return saved, p
-			}
+		file, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		saved, ok := readToken(file)
+		_ = file.Close()
+		if ok {
+			return saved, p
 		}
 	}
 	return "", ""
 }
 
 func saveToken(tok string) string {
+	if !isValidToken(tok) {
+		return ""
+	}
 	for _, p := range candidateTokenPaths() {
 		dir := filepath.Dir(p)
 		if dir != "." && dir != "" {
@@ -495,7 +501,9 @@ func saveToken(tok string) string {
 			}
 		}
 		if err := os.WriteFile(p, []byte(tok), 0600); err == nil {
-			return p
+			if err := os.Chmod(p, 0600); err == nil {
+				return p
+			}
 		}
 	}
 	return ""
@@ -503,10 +511,13 @@ func saveToken(tok string) string {
 
 func loadSavedNodeAddr() string {
 	for _, p := range candidateNodePaths() {
-		if data, err := os.ReadFile(p); err == nil {
+		if data, err := os.ReadFile(p); err == nil && len(data) <= 4096 {
 			raw := strings.TrimSpace(string(data))
 			if raw != "" {
-				return resolveNodeInput(raw).ControlAddr
+				control, err := validateControlAddr(resolveNodeInput(raw).ControlAddr)
+				if err == nil {
+					return control
+				}
 			}
 		}
 	}
@@ -526,7 +537,9 @@ func saveNodeAddr(ctrlAddr string) string {
 			}
 		}
 		if err := os.WriteFile(p, []byte(ctrlAddr), 0600); err == nil {
-			return p
+			if err := os.Chmod(p, 0600); err == nil {
+				return p
+			}
 		}
 	}
 	return ""
