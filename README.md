@@ -63,13 +63,21 @@ To update:
 curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- update
 ```
 
-To uninstall but retain saved tunnel data:
+To uninstall the Linux CLI and any native Nethernet Desktop/CLI packages while retaining saved data:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- uninstall
 ```
 
-To remove saved token and node data as well, explicitly pass `--purge-data`.
+The Linux uninstall action stops a running packaged Nethernet Desktop launcher, stops the per-user tunnel service, removes native `nethernet-desktop` and `bedrocknode-tunnel` packages when present, and removes the standalone CLI binary installed under `~/.local/bin`. It preserves saved profiles, tokens, node settings and cached engine files by default. It does not remove portable Desktop copies or manually installed binaries outside the package manager.
+
+To also remove saved tunnel and Desktop data, explicitly pass `--purge-data`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- uninstall --purge-data
+```
+
+On Windows, the PowerShell CLI uninstaller continues to remove the CLI only; remove the Desktop app separately using its Windows **Uninstall Nethernet Desktop** entry.
 
 ## Windows CLI quick install
 

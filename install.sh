@@ -114,21 +114,130 @@ BINARY_PATH="$INSTALL_DIR/nethernet-client"
 DATA_DIR="$CONFIG_HOME/bedrocknode-tunnel"
 
 if [[ "$ACTION" == "uninstall" ]]; then
+  stop_desktop_launcher() {
+    local proc_dir pid executable
+    local -a desktop_pids=()
+    local -a still_running=()
+
+    # Linux task names are limited to 15 characters. Inspect /proc/<pid>/exe
+    # instead of relying on pkill -x, which can miss NethernetDesktop.
+    for proc_dir in /proc/[0-9]*; do
+      [[ -r "$proc_dir/exe" ]] || continue
+      pid="${proc_dir##*/}"
+      executable="$(readlink "$proc_dir/exe" 2>/dev/null || true)"
+      executable="${executable% (deleted)}"
+      if [[ "$executable" == "/usr/bin/NethernetDesktop" || "$executable" == "/usr/local/bin/NethernetDesktop" ]]; then
+        desktop_pids+=("$pid")
+      fi
+    done
+
+    ((${#desktop_pids[@]} > 0)) || return 0
+    echo "Stopping running Nethernet Desktop instance(s)..."
+    for pid in "${desktop_pids[@]}"; do
+      kill -TERM "$pid" 2>/dev/null || true
+    done
+
+    for attempt in {1..40}; do
+      still_running=()
+      for pid in "${desktop_pids[@]}"; do
+        [[ -r "/proc/$pid/exe" ]] || continue
+        executable="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+        executable="${executable% (deleted)}"
+        if [[ "$executable" == "/usr/bin/NethernetDesktop" || "$executable" == "/usr/local/bin/NethernetDesktop" ]]; then
+          still_running+=("$pid")
+        fi
+      done
+      ((${#still_running[@]} == 0)) && return 0
+      sleep 0.25
+    done
+
+    echo "Could not gracefully stop Nethernet Desktop (PID(s): ${still_running[*]})." >&2
+    echo "Close the application and run the uninstall command again." >&2
+    return 1
+  }
+
+  remove_native_packages() {
+    local package
+    local -a installed_packages=()
+
+    if command -v pacman >/dev/null 2>&1; then
+      for package in nethernet-desktop bedrocknode-tunnel; do
+        if pacman -Qq "$package" >/dev/null 2>&1; then
+          installed_packages+=("$package")
+        fi
+      done
+      if ((${#installed_packages[@]} > 0)); then
+        if (( EUID == 0 )); then
+          pacman -R --noconfirm "${installed_packages[@]}"
+        elif command -v sudo >/dev/null 2>&1; then
+          sudo pacman -R --noconfirm "${installed_packages[@]}"
+        else
+          echo "sudo is required to remove package(s): ${installed_packages[*]}" >&2
+          return 1
+        fi
+      fi
+    elif command -v dpkg-query >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+      for package in nethernet-desktop bedrocknode-tunnel; do
+        if dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null | grep -qx installed; then
+          installed_packages+=("$package")
+        fi
+      done
+      if ((${#installed_packages[@]} > 0)); then
+        if (( EUID == 0 )); then
+          apt-get remove -y "${installed_packages[@]}"
+        elif command -v sudo >/dev/null 2>&1; then
+          sudo apt-get remove -y "${installed_packages[@]}"
+        else
+          echo "sudo is required to remove package(s): ${installed_packages[*]}" >&2
+          return 1
+        fi
+      fi
+    else
+      echo "No supported native package manager found; skipping native package removal."
+      return 0
+    fi
+
+    if ((${#installed_packages[@]} > 0)); then
+      printf 'Removed native package(s): %s\n' "${installed_packages[*]}"
+    else
+      echo "No native Nethernet Desktop/CLI packages were installed."
+    fi
+  }
+
+  # Stop the desktop first so it can shut down its localhost server cleanly.
+  stop_desktop_launcher || exit 1
+
+  # Stop the shared per-user tunnel service before removing either product.
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl --user disable --now bedrocknode-tunnel.service >/dev/null 2>&1 || true
+    if systemctl --user is-active --quiet bedrocknode-tunnel.service 2>/dev/null; then
+      systemctl --user disable --now bedrocknode-tunnel.service >/dev/null 2>&1 || {
+        echo "Could not stop the Bedrock Node Tunnel user service; aborting uninstall." >&2
+        exit 1
+      }
+    fi
   fi
-  rm -f "$SERVICE_FILE" "$BINARY_PATH"
+
+  # Remove native packages (if installed), then the standalone CLI files.
+  remove_native_packages || exit 1
+  rm -f -- "$SERVICE_FILE" "$BINARY_PATH"
   if command -v systemctl >/dev/null 2>&1; then
     systemctl --user daemon-reload >/dev/null 2>&1 || true
   fi
   rmdir "$INSTALL_DIR" 2>/dev/null || true
+
   if [[ "$PURGE_DATA" -eq 1 ]]; then
-    rm -rf "$DATA_DIR"
-    echo "Removed the saved tunnel token and node configuration."
+    if [[ -z "$DATA_DIR" || "$DATA_DIR" == "/" || "$DATA_DIR" != "$CONFIG_HOME/bedrocknode-tunnel" ]]; then
+      echo "Refusing to purge an unsafe data directory path: '$DATA_DIR'." >&2
+      exit 1
+    fi
+    rm -rf -- "$DATA_DIR"
+    echo "Removed saved tunnel tokens, node settings, Desktop profiles and cached engine files."
   else
-    echo "Kept saved tunnel data in: $DATA_DIR"
+    echo "Kept saved tunnel and Desktop data in: $DATA_DIR"
   fi
-  echo "nethernet-client has been uninstalled."
+
+  echo "Nethernet Desktop and nethernet-client uninstall completed."
+  echo "Portable Desktop copies and manually installed binaries outside package managers are not removed."
   exit 0
 fi
 
