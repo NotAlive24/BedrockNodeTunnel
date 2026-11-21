@@ -2,7 +2,9 @@ Unicode true
 RequestExecutionLevel user
 
 !define PRODUCT_NAME "Nethernet Desktop"
-!define PRODUCT_VERSION "1.0.0"
+!ifndef PRODUCT_VERSION
+!define PRODUCT_VERSION "2.0.0"
+!endif
 !define PRODUCT_EXE "NethernetDesktop.exe"
 !ifndef ARG_DESKTOP_BINARY
   !error "ARG_DESKTOP_BINARY must point to the built executable"
