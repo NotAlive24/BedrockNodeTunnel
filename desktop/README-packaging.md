@@ -9,7 +9,7 @@ The unified `v2.0.0` release produces:
 - Arch Linux x86_64 `.pkg.tar.zst`
 - Portable Linux x86_64 `.tar.gz` containing the launcher and matching CLI engine
 
-The native packages install the launcher in `/usr/bin`, the generated application icon in the hicolor icon theme, and a desktop entry. They do not require GTK4 or WebKitGTK at runtime.
+The native packages install the launcher in `/usr/bin`, the generated application icon in the hicolor icon theme, and a desktop entry. They do not require GTK4 or WebKitGTK at runtime. The in-app uninstall action uses `pkexec` with the system package manager and preserves user data unless the user explicitly selects purge.
 
 ## Windows
 
@@ -17,7 +17,7 @@ The unified release creates:
 - Per-user NSIS installer for x64
 - Portable x64 `.zip` containing the launcher and matching CLI engine
 
-The installer does not request administrator privileges, and does not bundle or require WebView2.
+The installer does not request administrator privileges, and does not bundle or require WebView2. The application includes an in-app uninstall action that hands off to the NSIS uninstaller after closing the running desktop process. User data is preserved unless the purge option is selected.
 
 ## Unified release
 
