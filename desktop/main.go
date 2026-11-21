@@ -27,29 +27,48 @@ func main() {
 }
 
 func runWebUI(app *AppService) error {
-	sub, err := fs.Sub(frontend, "frontend")
+	assets, err := fs.Sub(frontend, "frontend")
 	if err != nil {
 		return fmt.Errorf("load embedded frontend: %w", err)
 	}
+
+	// Bind only to IPv4 loopback and let the OS choose an unused port.
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return fmt.Errorf("start loopback listener: %w", err)
 	}
 	address := listener.Addr().String()
-	server := &http.Server{
-		Handler:           newWebHandler(app, address, sub, nil),
+
+	var server *http.Server
+	shutdown := func() {
+		go func() {
+			_ = app.ServiceShutdown()
+			deadline := time.Now().Add(5 * time.Second)
+			_ = server.Close()
+			for time.Now().Before(deadline) {
+				if err := listener.Close(); err == nil || errors.Is(err, net.ErrClosed) {
+					return
+				}
+				time.Sleep(25 * time.Millisecond)
+			}
+		}()
+	}
+
+	server = &http.Server{
+		Handler:           newWebHandler(app, address, assets, shutdown),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      2 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
-	errCh := make(chan error, 1)
+
+	serverErrors := make(chan error, 1)
 	go func() {
 		err := server.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errCh <- err
+			serverErrors <- err
 		}
-		close(errCh)
+		close(serverErrors)
 	}()
 
 	url := "http://" + address + "/"
@@ -62,8 +81,9 @@ func runWebUI(app *AppService) error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(signals)
+
 	select {
-	case err, ok := <-errCh:
+	case err, ok := <-serverErrors:
 		if ok && err != nil {
 			return fmt.Errorf("local web server stopped: %w", err)
 		}
