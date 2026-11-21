@@ -1,4 +1,4 @@
-const $=id=>document.getElementById(id);let snapshot=null,editingId='';
+const $=id=>document.getElementById(id);let snapshot=null,editingId='',currentSettings={enginePath:'',theme:'green'},settingsLoaded=false;
 const API={
  async request(path,method='GET',body){const options={method,headers:{'Accept':'application/json'}};if(body!==undefined){options.headers['Content-Type']='application/json';options.body=JSON.stringify(body)}const response=await fetch('/api/'+path,options);let payload={};try{payload=await response.json()}catch{}if(!response.ok)throw new Error(payload.error||('HTTP '+response.status));return payload.data},
  GetSnapshot:()=>API.request('snapshot'),
@@ -14,11 +14,13 @@ const API={
  SetActiveProfile:id=>API.request('profiles/active','POST',{id}),
  DeleteProfile:id=>API.request('profiles/delete','POST',{id}),
  SaveSettings:settings=>API.request('settings/save','POST',{settings}),
+ UninstallApp:purgeData=>API.request('uninstall','POST',{purgeData}),
  InstallOrUpdateEngine:()=>API.request('engine/install','POST',{}),
  RunDiagnostics:()=>API.request('diagnostics','POST',{}),
  ClearLogs:()=>API.request('logs/clear','POST',{}),
  Quit:()=>API.request('shutdown','POST',{})
 };
+function applyTheme(theme){const allowed=['green','cyan','blue','purple','orange','rose'];const selected=allowed.includes(theme)?theme:'green';document.documentElement.dataset.theme=selected;if($('theme-select'))$('theme-select').value=selected}
 function toast(s){const t=$('toast');t.textContent=s;t.style.display='block';setTimeout(()=>t.style.display='none',4500)}
 async function call(name,...args){try{const fn=API[name];if(typeof fn!=='function')throw new Error('Unknown API action: '+name);const r=await fn(...args);await refresh();return r}catch(e){toast(e?.message||String(e));throw e}}
 function safe(fn){return (...args)=>Promise.resolve(fn(...args)).catch(()=>{})}
@@ -30,6 +32,7 @@ async function refresh(){
  refreshing=true;
  try{
   snapshot=await API.GetSnapshot();
+  if(!settingsLoaded){currentSettings=await API.GetSettings();currentSettings.theme=currentSettings.theme||'green';applyTheme(currentSettings.theme);settingsLoaded=true}
   $('version').textContent='Desktop '+snapshot.appVersion;
   $('state-pill').textContent=snapshot.connectionState;
   $('state').textContent=snapshot.connectionState;
@@ -68,6 +71,8 @@ $('save-profile').onclick=safe(async()=>{const p={id:editingId,name:$('p-name').
 async function diagnostics(){const out=await call('RunDiagnostics');$('diag-results').innerHTML=out.map(x=>'<div class="entry"><b class="'+esc(x.status)+'">'+esc(x.status.toUpperCase())+' · '+esc(x.name)+'</b><p>'+esc(x.details)+'</p></div>').join('')}
 $('diag').onclick=safe(diagnostics);$('run-diag').onclick=safe(()=>{page('diagnostics');return diagnostics()});$('refresh-logs').onclick=safe(async()=>renderLogs(await API.GetLogs()));$('clear-logs').onclick=safe(()=>call('ClearLogs'));
 $('install-engine').onclick=safe(async()=>{const b=$('install-engine');b.disabled=true;b.textContent='Installing…';try{const x=await call('InstallOrUpdateEngine');toast('Installed '+x.version)}finally{b.disabled=false;b.textContent='Install / update engine'}});
-$('choose-engine').onclick=safe(async()=>{await call('SaveSettings',{enginePath:$('custom-engine').value.trim()});toast('Engine path saved')});
+$('choose-engine').onclick=safe(async()=>{currentSettings=await API.SaveSettings({...currentSettings,enginePath:$('custom-engine').value.trim()});await refresh();toast('Engine path saved')});
+$('theme-select').onchange=safe(async()=>{const theme=$('theme-select').value;currentSettings=await API.SaveSettings({...currentSettings,theme});applyTheme(theme);toast('Theme saved for next launch')});
+$('uninstall-app').onclick=safe(async()=>{const purge=$('purge-data').checked;const message=purge?'Uninstall Nethernet Desktop AND permanently delete saved profiles, engine files, and tunnel credentials?':'Uninstall Nethernet Desktop? Saved profiles, engine files and tunnel credentials will be kept.';if(!confirm(message))return;if(purge&&!confirm('This also removes your saved tunnel credentials. Continue?'))return;const button=$('uninstall-app');button.disabled=true;button.textContent='Preparing uninstall…';try{await API.UninstallApp(purge);localUIStopped=true;$('state').textContent='Uninstall started';$('substate').textContent='The application will close and the uninstaller will finish removing it.'}catch(e){button.disabled=false;button.textContent='Uninstall application';throw e}});
 $('quit-app').onclick=safe(async()=>{if(!confirm('Stop the local Nethernet Desktop UI server?'))return;await API.Quit();localUIStopped=true;$('state').textContent='Local UI stopped';$('substate').textContent='You can close this browser tab.'});
 refresh();setInterval(refresh,2500);
