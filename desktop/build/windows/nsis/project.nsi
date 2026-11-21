@@ -4,8 +4,8 @@ RequestExecutionLevel user
 !define PRODUCT_NAME "Nethernet Desktop"
 !define PRODUCT_VERSION "1.0.0"
 !define PRODUCT_EXE "NethernetDesktop.exe"
-!ifndef ARG_WAILS_AMD64_BINARY
-  !error "ARG_WAILS_AMD64_BINARY must point to the built executable"
+!ifndef ARG_DESKTOP_BINARY
+  !error "ARG_DESKTOP_BINARY must point to the built executable"
 !endif
 
 VIProductVersion "1.0.0.0"
@@ -30,7 +30,7 @@ ShowInstDetails show
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File /oname=${PRODUCT_EXE} "${ARG_WAILS_AMD64_BINARY}"
+  File /oname=${PRODUCT_EXE} "${ARG_DESKTOP_BINARY}"
   WriteUninstaller "$INSTDIR\\Uninstall.exe"
   CreateDirectory "$SMPROGRAMS\\Nethernet Desktop"
   CreateShortcut "$SMPROGRAMS\\Nethernet Desktop\\Nethernet Desktop.lnk" "$INSTDIR\\${PRODUCT_EXE}"
