@@ -2,9 +2,71 @@ package main
 
 import (
 	"os"
+	"encoding/json"
 	"path/filepath"
+	"os/exec"
+	"runtime"
+	"strings"
 	"testing"
 )
+
+func TestThemeValidationAndDefault(t *testing.T) {
+	if defaultTheme != "green" {
+		t.Fatalf("default theme = %q, want green", defaultTheme)
+	}
+	for _, theme := range []string{"green", "cyan", "blue", "purple", "orange", "rose"} {
+		if err := validateTheme(theme); err != nil {
+			t.Errorf("validateTheme(%q): %v", theme, err)
+		}
+	}
+	for _, theme := range []string{"", "Green", "red", "unknown"} {
+		if err := validateTheme(theme); err == nil {
+			t.Errorf("validateTheme(%q) should fail", theme)
+		}
+	}
+}
+
+func TestSaveSettingsPersistsThemeWithoutStoppingTunnel(t *testing.T) {
+	root := t.TempDir()
+	service := &AppService{
+		configDir: root,
+		configPath: filepath.Join(root, "desktop.json"),
+		config: appConfig{
+			SchemaVersion: 1,
+			ActiveProfile: "default",
+			Profiles: []Profile{defaultProfile()},
+			Settings: AppSettings{Theme: defaultTheme},
+		},
+	}
+	if err := service.SaveSettings(AppSettings{Theme: "purple"}); err != nil {
+		t.Fatalf("SaveSettings(theme only): %v", err)
+	}
+	data, err := os.ReadFile(service.configPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	var saved appConfig
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatalf("decode saved config: %v", err)
+	}
+	if saved.Settings.Theme != "purple" {
+		t.Fatalf("saved theme = %q, want purple", saved.Settings.Theme)
+	}
+}
+
+func TestLoadConfigDefaultsMissingThemeToGreen(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "desktop.json")
+	legacy := `{"schemaVersion":1,"activeProfile":"default","profiles":[{"id":"default","name":"Default","region":"AUTO","localTCP":"127.0.0.1:19132","localUDPPort":47334}]}`
+	if err := os.WriteFile(configPath, []byte(legacy), 0600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+	service := &AppService{configDir: root, configPath: configPath}
+	service.loadConfig()
+	if got := service.GetSettings().Theme; got != "green" {
+		t.Fatalf("legacy config theme = %q, want green", got)
+	}
+}
 
 func TestValidateProfile(t *testing.T) {
  valid := Profile{ID:"test",Name:"Home",Region:"AUTO",LocalTCP:"127.0.0.1:19132",LocalUDPPort:47334}
@@ -39,6 +101,16 @@ func TestCleanLogLineRedactsToken(t *testing.T) {
  if got=="[Tunnel Client] token=supersecret authenticated tunnel established" { t.Fatal("token was not redacted") }
 }
 
+func TestCleanLogLineRedactsQuotedTokensAndAuthorizationHeaders(t *testing.T) {
+	input := "[Tunnel Client] token=token-secret \"token\":\"json-secret\" Authorization: Bearer header-secret authenticated tunnel established"
+	got := cleanLogLine(input)
+	for _, secret := range []string{"token-secret", "json-secret", "header-secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("sensitive value %q was not redacted: %q", secret, got)
+		}
+	}
+}
+
 func TestResolveEngineFindsUpdaterInstalledAsset(t *testing.T) {
 	root := t.TempDir()
 	enginePath := filepath.Join(root, "bin", engineAssetName())
@@ -56,3 +128,93 @@ func TestResolveEngineFindsUpdaterInstalledAsset(t *testing.T) {
 	}
 }
 
+
+func TestCleanLogLineNormalizesMojibakeAndRedactsClaimCodes(t *testing.T) {
+	input := "[Bedrock Node Tunnel] â€¢ Oceania (Sydney Hub): https://oceania.bedrocknode.net/?claim=3DD314"
+	got := cleanLogLine(input)
+	if strings.Contains(got, "â€¢") {
+		t.Fatalf("mojibake bullet was not normalized: %q", got)
+	}
+	if !strings.Contains(got, "• Oceania") {
+		t.Fatalf("expected normalized bullet and hub name, got %q", got)
+	}
+	if strings.Contains(got, "3DD314") {
+		t.Fatalf("one-time claim code was not redacted: %q", got)
+	}
+	if !strings.Contains(got, "claim=[redacted]") {
+		t.Fatalf("redacted claim marker missing: %q", got)
+	}
+}
+
+func TestLoadConfigPreservesCorruptOriginalAndWritesPrivateDefaults(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "desktop.json")
+	corrupt := []byte("{ not valid json")
+	if err := os.WriteFile(configPath, corrupt, 0644); err != nil {
+		t.Fatalf("write corrupt config: %v", err)
+	}
+
+	service := &AppService{configDir: root, configPath: configPath}
+	service.loadConfig()
+
+	backup, err := os.ReadFile(configPath + ".corrupt")
+	if err != nil {
+		t.Fatalf("read corrupt config backup: %v", err)
+	}
+	if string(backup) != string(corrupt) {
+		t.Fatalf("corrupt backup = %q, want %q", backup, corrupt)
+	}
+	if len(service.GetProfiles()) != 1 {
+		t.Fatalf("default profile count = %d, want 1", len(service.GetProfiles()))
+	}
+	if service.lastError == "" {
+		t.Fatal("expected a warning about the preserved invalid config")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(configPath)
+		if err != nil {
+			t.Fatalf("stat recovered config: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("config permissions = %o, want 600", got)
+		}
+	}
+}
+
+func TestActiveProfileCannotBeEditedOrDeletedWhileTunnelRuns(t *testing.T) {
+	root := t.TempDir()
+	service := &AppService{
+		configDir: root,
+		configPath: filepath.Join(root, "desktop.json"),
+		config: appConfig{
+			SchemaVersion: 1,
+			ActiveProfile: "default",
+			Profiles: []Profile{
+				defaultProfile(),
+				{ID: "other", Name: "Other", Region: "AUTO", LocalTCP: "127.0.0.1:19133", LocalUDPPort: 47335},
+			},
+		},
+		cmd: &exec.Cmd{},
+	}
+	updated := defaultProfile()
+	updated.Name = "Changed while running"
+	if _, err := service.SaveProfile(updated); err == nil {
+		t.Fatal("editing active profile while running should fail")
+	}
+	if _, err := service.DeleteProfile("default"); err == nil {
+		t.Fatal("deleting active profile while running should fail")
+	}
+
+	// New, inactive profiles may still be prepared while an existing tunnel runs.
+	if _, err := service.SaveProfile(Profile{Name: "Next", Region: "AUTO", LocalTCP: "127.0.0.1:19134", LocalUDPPort: 47336}); err != nil {
+		t.Fatalf("saving a new inactive profile while running: %v", err)
+	}
+
+	service.cmd = nil
+	if _, err := service.DeleteProfile("default"); err != nil {
+		t.Fatalf("deleting active profile while stopped: %v", err)
+	}
+	if got := service.config.ActiveProfile; got != "other" {
+		t.Fatalf("active profile after delete = %q, want other", got)
+	}
+}

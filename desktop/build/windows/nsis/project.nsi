@@ -2,19 +2,22 @@ Unicode true
 RequestExecutionLevel user
 
 !define PRODUCT_NAME "Nethernet Desktop"
-!define PRODUCT_VERSION "1.0.0"
+!ifndef PRODUCT_VERSION
+!define PRODUCT_VERSION "2.0.0"
+!endif
 !define PRODUCT_EXE "NethernetDesktop.exe"
 !ifndef ARG_DESKTOP_BINARY
   !error "ARG_DESKTOP_BINARY must point to the built executable"
 !endif
 
-VIProductVersion "1.0.0.0"
+VIProductVersion "${PRODUCT_VERSION}.0"
 VIAddVersionKey "CompanyName" "NotAlive24"
 VIAddVersionKey "FileDescription" "Nethernet Desktop Installer"
 VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
 VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 
 !include "MUI.nsh"
+!include "FileFunc.nsh"
 Name "${PRODUCT_NAME}"
 OutFile "..\\..\\..\\bin\\NethernetDesktop-installer.exe"
 InstallDir "$LOCALAPPDATA\\Programs\\Nethernet Desktop"
@@ -43,6 +46,14 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\\Nethernet Desktop\\Nethernet Desktop.lnk"
   RMDir "$SMPROGRAMS\\Nethernet Desktop"
   Delete "$DESKTOP\\Nethernet Desktop.lnk"
+
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} "$R0" "/PURGE" $R1
+  IfErrors keep_user_data
+    RMDir /r "$APPDATA\\bedrocknode-tunnel"
+  keep_user_data:
+
   Delete "$INSTDIR\\${PRODUCT_EXE}"
   Delete "$INSTDIR\\Uninstall.exe"
   RMDir "$INSTDIR"

@@ -1,89 +1,111 @@
-# ⚡ Bedrock Node Tunnel — Open-Source Client
+# Bedrock Node Tunnel — v2.0.0
 
-![Bedrock Node Tunnel](logo.jpg)
+**Bedrock Node Tunnel** is an open-source client for hosting a vanilla Minecraft Bedrock Dedicated Server behind CGNAT or restrictive routers. It forwards Bedrock TCP and UDP traffic through the Bedrock Node Tunnel relay, with the Raw UDP Fast-Lane and a Yamux fallback.
 
-**Bedrock Node Tunnel** is a 100% Vanilla Minecraft Bedrock Dedicated Server (`transport=nethernet`) WebRTC UDP + TCP tunneling client with a **Raw UDP Fast-Lane**. Host your Bedrock server behind Starlink, CGNAT, or strict routers without WaterdogPE, Geyser, or wiped player XUIDs/inventories.
+- **Service:** https://bedrocknode.net
+- **Upstream project:** https://github.com/stonercraft420/BedrockNodeTunnel
+- **Releases:** https://github.com/NotAlive24/BedrockNodeTunnel/releases
 
-- 🌐 **Get Your Free Tunnel & Ports:** [https://bedrocknode.net](https://bedrocknode.net)
-- 💬 **Join Our Discord:** [https://discord.gg/Fcq2yCjQnV](https://discord.gg/Fcq2yCjQnV)
-- 💻 **Upstream Project:** [https://github.com/stonercraft420/BedrockNodeTunnel](https://github.com/stonercraft420/BedrockNodeTunnel)
+## What's new in v2.0.0
 
----
+- **Nethernet Desktop Control Suite:** a Go desktop launcher with a browser-based control panel, profiles, engine installation/update, diagnostics, logs and background-service controls. Green is the default accent theme, with five alternative colors that persist across launches; Settings also includes a native uninstall action with optional data removal.
+- **Localhost-only UI:** the desktop process binds only to `127.0.0.1` on an automatically selected port. It does not expose the control API to the LAN and uses same-origin requests with a restrictive Content Security Policy.
+- **Windows and Linux desktop packaging:** Windows per-user NSIS installer, Debian/Ubuntu package, Arch Linux package, and portable Linux/Windows bundles.
+- **Engine update safety:** the desktop updater verifies SHA-256 and the engine's reported version before replacing the working executable, and restores the previous engine if activation or configuration saving fails.
+- **CLI reliability and resource limits:** validated node metadata, bounded metadata/token reads, short-write-safe packet framing, bounded raw UDP player sessions and smaller socket buffers.
 
-## 🔍 Why Is This Repository Open-Source?
-We believe server hosts should never have to run mystery `.exe` files on their machines. This repository contains the complete source code (`client.go`) for `nethernet-client.exe`:
-- **Zero File or System Access:** Only forwards traffic between the Bedrock Node Tunnel regional hubs (`US`, `TX`, `UK`, `BR`, `ASIA`, `OC`) and your local Bedrock server (`127.0.0.1:19132` + local WebRTC UDP ports).
-- **Single Official Dependency:** Uses only the standard Go library and `github.com/hashicorp/yamux`. Release builds are statically linked (`CGO_ENABLED=0`).
+The v1.3 tunnel capabilities remain: Raw UDP Fast-Lane, mapped TCP streams for multi-server tunnels, connection tuning, and local UDP fallback candidates.
 
-## Supported Platforms
+## Release assets
 
-## What's new in v1.3
-
-- **Raw UDP Fast-Lane:** carries Bedrock player UDP traffic over the raw UDP fast path.
-- **Multi-server TCP mapping:** supports mapped TCP streams that identify the target local TCP port.
-- **Network tuning:** configures TCP no-delay/keepalive and larger TCP/UDP socket buffers to improve tunnel throughput.
-- **Local UDP fallback candidates:** tries the configured LAN address and IPv4/IPv6 loopback targets.
-
-
-| Platform | Architecture | Release Asset |
+| Platform | CLI | Desktop |
 |---|---|---|
-| Windows | x64 | `nethernet-client-windows-amd64.exe` |
-| Windows | ARM64 | `nethernet-client-windows-arm64.exe` |
-| Linux | x86_64 | `nethernet-client-linux-amd64` |
-| Linux | ARM64 | `nethernet-client-linux-arm64` |
-| Debian / Ubuntu | amd64, arm64 | `.deb` packages |
-| Arch Linux | x86_64, aarch64 | `PKGBUILD` + source tarball |
+| Windows x64 | `nethernet-client-windows-amd64.exe` | `NethernetDesktop-installer.exe`, portable `.zip` |
+| Windows ARM64 | `nethernet-client-windows-arm64.exe` | Not included in this desktop release |
+| Linux x86_64 | `nethernet-client-linux-amd64`, `.deb`, Arch `.pkg.tar.zst`/PKGBUILD | `.deb`, Arch `.pkg.tar.zst`, portable `.tar.gz` |
+| Linux ARM64 | `nethernet-client-linux-arm64`, `.deb`, Arch PKGBUILD/source tarball | Not included in this desktop release |
 
----
+All assets in the unified `v2.0.0` release are listed in `SHA256SUMS`.
 
-## 🐧 Option 1: Linux Quick Install (Ubuntu, Debian, Arch and other distros)
+## Linux CLI quick install
 
-Run this one-line command in a terminal:
+Run:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash
 ```
 
-The installer detects x86_64/amd64 or ARM64, downloads the matching latest Linux release from **this repository**, verifies it against `SHA256SUMS`, and installs it to `~/.local/bin/nethernet-client`. It does not require `sudo`.
+The installer detects x86_64/amd64 or ARM64, downloads the matching CLI binary from this repository's latest release, verifies its SHA-256 checksum, and installs it to `~/.local/bin/nethernet-client`. It does not require sudo.
 
-The installer preserves saved tunnel settings in `~/.config/bedrocknode-tunnel`. On systemd-based distributions, it also writes a per-user service unit; enable it with:
+The CLI stores its tunnel token and selected node under `~/.config/bedrocknode-tunnel` where possible. On systemd-based distributions, the installer can write a per-user service unit.
 
-```bash
-systemctl --user enable --now bedrocknode-tunnel.service
-```
-
-To update or uninstall, use:
+To update:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- update
+```
+
+To uninstall but retain saved tunnel data:
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- uninstall
 ```
 
-To remove the saved token and configuration as well, explicitly pass `--purge-data`:
+To remove saved token and node data as well, explicitly pass `--purge-data`.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash -s -- uninstall --purge-data
-```
+## Windows CLI quick install
 
-You can also use the Debian package attached to the [v1.3 release](https://github.com/NotAlive24/BedrockNodeTunnel/releases/tag/v1.3). From the directory containing the downloaded package, run `sudo apt install ./bedrocknode-tunnel_1.3_amd64.deb` (use the ARM64 package on ARM64 systems).
-
----
-
-## 🪟 Option 2: Windows Quick Start (Pre-Built `.exe` or PowerShell Installer)
-
-### Method A: Direct `.exe` Download
-1. Download `nethernet-client-windows-amd64.exe` (or `nethernet-client-windows-arm64.exe`) from the [Releases](https://github.com/NotAlive24/BedrockNodeTunnel/releases) tab.
-2. Run the executable.
-3. Open the Claim Link shown in the console (or enter the 6-digit code) to link the tunnel to your free account at `bedrocknode.net`.
-4. Copy the `server.properties` lines shown on your dashboard into your Bedrock Dedicated Server and restart it.
-
-### Method B: PowerShell Installer (Windows 10/11)
-
-Download and run the installer from PowerShell:
+Run in PowerShell:
 
 ```powershell
 irm https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.ps1 -OutFile install.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\\install.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-The installer verifies the downloaded executable using the release's SHA-256 manifest and preserves saved tunnel settings during updates and uninstall unless `-PurgeData` is explicitly supplied.
+The installer verifies the downloaded executable against the release's SHA-256 manifest and preserves saved tunnel settings during updates and normal uninstall.
+
+## Nethernet Desktop
+
+The desktop suite is included in the same `v2.0.0` release as the CLI.
+
+**Arch Linux:**
+
+```bash
+sudo pacman -U ./nethernet-desktop-2.0.0-1-x86_64.pkg.tar.zst
+NethernetDesktop
+```
+
+**Debian/Ubuntu:** install the `.deb` package with your package manager, then launch **Nethernet Desktop** from the application menu or run `NethernetDesktop`.
+
+**Windows:** run `NethernetDesktop-installer.exe`. It installs per-user and does not request administrator privileges.
+
+The launcher prints its local URL when started from a terminal and opens the system browser automatically. Keep the launcher running while using the UI. Stop it with Ctrl+C or the **Stop local UI** control in Settings. The control interface is served only from `127.0.0.1`; closing the browser tab does not stop the launcher.
+
+The native desktop packages are x86_64-only in v2.0.0. The desktop app uses the system browser; it does not bundle WebView2, GTK or WebKitGTK. There is no AppImage in this release.
+
+## Security notes
+
+- Desktop HTTP/API access is limited to loopback, exact Host and same-origin requests. It does not listen on `0.0.0.0` or a LAN address.
+- Desktop profiles/configuration are stored per-user. CLI token files are written with user-only file permissions where supported.
+- **Important transport limitation:** the existing relay wire protocol sends the tunnel token in its TCP authentication handshake and UDP heartbeat without TLS/DTLS encryption. The v2.0.0 client does not change the relay protocol, so this traffic is not protected against an attacker able to observe the network path. End-to-end transport encryption requires a coordinated server-side protocol update. Treat the token as a password and use trusted networks.
+
+## Build from source
+
+CLI:
+
+```bash
+go test ./...
+go vet ./...
+go run ./tools/release -version 2.0.0 -out dist -targets deb,arch,windows
+```
+
+Desktop:
+
+```bash
+cd desktop
+go test ./...
+go run ./tools/generate-icon
+go build -trimpath -ldflags="-s -w" -o bin/NethernetDesktop .
+```
+
+See [desktop packaging documentation](desktop/README-packaging.md) for package details.

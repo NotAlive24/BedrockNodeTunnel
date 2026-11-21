@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,9 +37,14 @@ const (
 	nodeSaveFile         = "bedrocknode-node.txt"
 	maxTokenLength       = 4096
 	handshakeHint        = 5
+	maxRawPlayerSessions = 128
+	maxUDPPacketPayload  = 65507
+	tcpSocketBufferBytes = 512 * 1024
+	udpSocketBufferBytes = 128 * 1024
+	rawUDPSocketBufferBytes = 512 * 1024
 )
 
-var version = "v1.3.0"
+var version = "v2.0.0"
 
 var errInvalidToken = errors.New("invalid auth token rejected by server")
 
@@ -120,7 +126,7 @@ func main() {
 		showVersion     bool
 	)
 
-	flag.StringVar(&nodeFlag, "node", "", "Region code (US, TX, UK, BR, ASIA) or custom VPS domain/IP")
+	flag.StringVar(&nodeFlag, "node", "", "Region code or custom VPS domain; custom IPs require explicit -control and an HTTPS -web dashboard")
 	flag.StringVar(&controlAddr, "control", "", "Bedrock Node Tunnel VPS control address (auto-detected across regions if empty)")
 	flag.StringVar(&webUrl, "web", "https://bedrocknode.net", "Bedrock Node Tunnel Web Dashboard URL")
 	flag.StringVar(&token, "token", "", "Tunnel token (leave empty for automatic browser claim)")
@@ -166,7 +172,6 @@ func main() {
 			cleanWebURL = n.WebURL
 		}
 		pollWebOverride = cleanWebURL
-		_ = saveNodeAddr(controlAddr)
 	} else if explicitFlags["control"] && !explicitFlags["web"] {
 		n := resolveNodeInput(controlAddr)
 		controlAddr = n.ControlAddr
@@ -174,14 +179,36 @@ func main() {
 			cleanWebURL = n.WebURL
 		}
 		pollWebOverride = cleanWebURL
-		_ = saveNodeAddr(controlAddr)
 	} else if explicitFlags["web"] && !explicitFlags["control"] {
 		n := resolveNodeInput(cleanWebURL)
 		controlAddr = n.ControlAddr
 		pollWebOverride = cleanWebURL
-		_ = saveNodeAddr(controlAddr)
 	} else if explicitFlags["web"] && explicitFlags["control"] {
 		pollWebOverride = cleanWebURL
+	}
+
+	if controlAddr != "" {
+		controlAddr, err = validateControlAddr(controlAddr)
+		if err != nil {
+			log.Fatalf("[Bedrock Node Tunnel] Invalid control address: %v", err)
+		}
+	}
+	if pollWebOverride != "" {
+		pollWebOverride, err = validateWebURL(pollWebOverride)
+		if err != nil {
+			log.Fatalf("[Bedrock Node Tunnel] Invalid claim dashboard URL: %v. Remote dashboards must use HTTPS; for a custom IP, pass -control IP:port and -web https://your-dashboard.", err)
+		}
+	}
+	if err := validateLocalTCPTarget(localSignaling); err != nil {
+		log.Fatalf("[Bedrock Node Tunnel] Invalid local TCP target: %v", err)
+	}
+	if localUDPDefault < 1 || localUDPDefault > 65535 {
+		log.Fatalf("[Bedrock Node Tunnel] Local UDP fallback port must be between 1 and 65535")
+	}
+	if localUDPIP != "" && net.ParseIP(localUDPIP) == nil {
+		log.Fatalf("[Bedrock Node Tunnel] Local UDP IP must be a valid IPv4 or IPv6 address")
+	}
+	if controlAddr != "" {
 		_ = saveNodeAddr(controlAddr)
 	}
 
@@ -192,6 +219,21 @@ func main() {
 	log.Printf("[Bedrock Node Tunnel] Universal Open-Source Client %s (Raw UDP Fast-Lane) Starting...", version)
 	log.Printf("[Bedrock Node Tunnel] Local TCP target: %s | Local UDP target IP: %s", localSignaling, localUDPIP)
 	runClient(controlAddr, pollWebOverride, token, localSignaling, localUDPIP, localUDPDefault)
+}
+
+func validateLocalTCPTarget(raw string) error {
+	host, portText, err := net.SplitHostPort(strings.TrimSpace(raw))
+	if err != nil || host == "" {
+		return errors.New("target must be in host:port format")
+	}
+	if strings.ContainsAny(host, " \t\r\n/?#@") {
+		return errors.New("target host contains invalid characters")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("target port must be between 1 and 65535")
+	}
+	return nil
 }
 
 func resolveNodeInput(input string) RegionNode {
@@ -262,54 +304,152 @@ func resolveNodeInput(input string) RegionNode {
 
 func getActiveNodeList(customControl, customWeb string) []RegionNode {
 	if customControl != "" || customWeb != "" {
-		cAddr := customControl
-		wURL := customWeb
-		if cAddr == "" && wURL != "" {
-			cAddr = resolveNodeInput(wURL).ControlAddr
+		control := customControl
+		web := customWeb
+		if control == "" && web != "" {
+			control = resolveNodeInput(web).ControlAddr
 		}
-		if wURL == "" && cAddr != "" {
-			wURL = resolveNodeInput(cAddr).WebURL
+		if web == "" && control != "" {
+			web = resolveNodeInput(control).WebURL
 		}
-		return []RegionNode{
-			{
-				Code:        "CUSTOM",
-				Name:        "Selected Node (" + cAddr + ")",
-				WebURL:      strings.TrimRight(wURL, "/"),
-				ControlAddr: cAddr,
-			},
+		validControl, controlErr := validateControlAddr(control)
+		validWeb, webErr := validateWebURL(web)
+		if controlErr != nil || webErr != nil {
+			return nil
 		}
+		return []RegionNode{{
+			Code: "CUSTOM", Name: "Selected Node (" + validControl + ")",
+			WebURL: validWeb, ControlAddr: validControl,
+		}}
 	}
 
-	var nodes []RegionNode
-	seenCtrl := make(map[string]bool)
-	addNode := func(n RegionNode) {
-		if n.ControlAddr == "" || seenCtrl[n.ControlAddr] {
+	nodes := make([]RegionNode, 0, len(defaultRegionNodes))
+	seenControl := make(map[string]bool)
+	addNode := func(node RegionNode) {
+		if node.ControlAddr == "" || seenControl[node.ControlAddr] {
 			return
 		}
-		seenCtrl[n.ControlAddr] = true
-		nodes = append(nodes, n)
+		seenControl[node.ControlAddr] = true
+		nodes = append(nodes, node)
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return errors.New("too many redirects while loading node metadata")
+			}
+			host := strings.ToLower(req.URL.Hostname())
+			if req.URL.Scheme != "https" || !isBedrockNodeDomain(host) {
+				return errors.New("node metadata redirect left the trusted HTTPS service domain")
+			}
+			return nil
+		},
+	}
 	if resp, err := client.Get("https://bedrocknode.net/api/nodes"); err == nil {
 		if resp.StatusCode == http.StatusOK {
-			var remoteNodes []RegionNode
-			if json.NewDecoder(resp.Body).Decode(&remoteNodes) == nil {
-				for _, rn := range remoteNodes {
-					if rn.ControlAddr == "" && rn.WebURL != "" {
-						rn = resolveNodeInput(rn.WebURL)
+			data, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+			if readErr == nil && len(data) <= 1<<20 {
+				var remoteNodes []RegionNode
+				if json.Unmarshal(data, &remoteNodes) == nil {
+					for _, remote := range remoteNodes {
+						if trusted, ok := sanitizeDiscoveredNode(remote); ok {
+							addNode(trusted)
+						}
 					}
-					addNode(rn)
 				}
 			}
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
-	for _, n := range defaultRegionNodes {
-		addNode(n)
+	// Built-in endpoints remain the trusted fallback if metadata is unavailable
+	// or contains a region/address that fails validation.
+	for _, node := range defaultRegionNodes {
+		addNode(node)
 	}
 	return nodes
+}
+
+func isBedrockNodeDomain(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == "bedrocknode.net" || strings.HasSuffix(host, ".bedrocknode.net")
+}
+
+func sanitizeDiscoveredNode(remote RegionNode) (RegionNode, bool) {
+	code := strings.ToUpper(strings.TrimSpace(remote.Code))
+	var fallback *RegionNode
+	for i := range defaultRegionNodes {
+		if defaultRegionNodes[i].Code == code {
+			fallback = &defaultRegionNodes[i]
+			break
+		}
+	}
+	if fallback == nil {
+		return RegionNode{}, false
+	}
+
+	webURL := fallback.WebURL
+	if strings.TrimSpace(remote.WebURL) != "" {
+		validated, err := validateWebURL(remote.WebURL)
+		if err != nil {
+			return RegionNode{}, false
+		}
+		parsed, err := url.Parse(validated)
+		if err != nil || parsed.Scheme != "https" || !isBedrockNodeDomain(parsed.Hostname()) {
+			return RegionNode{}, false
+		}
+		webURL = validated
+	}
+
+	control := fallback.ControlAddr
+	if strings.TrimSpace(remote.ControlAddr) != "" {
+		validated, err := validateControlAddr(remote.ControlAddr)
+		if err != nil {
+			return RegionNode{}, false
+		}
+		host, port, _ := net.SplitHostPort(validated)
+		if port != "7000" {
+			return RegionNode{}, false
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			// Dynamic IP changes require a client update; do not send tokens to
+			// an arbitrary public IP returned by an HTTP metadata document.
+			if validated != fallback.ControlAddr {
+				return RegionNode{}, false
+			}
+		} else if !isBedrockNodeDomain(host) {
+			return RegionNode{}, false
+		}
+		control = validated
+	}
+
+	name := strings.TrimSpace(remote.Name)
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+	if name == "" || len(name) > 96 {
+		name = fallback.Name
+	}
+	return RegionNode{Code: fallback.Code, Name: name, WebURL: webURL, ControlAddr: control}, true
+}
+
+func validateControlAddr(raw string) (string, error) {
+	host, portText, err := net.SplitHostPort(strings.TrimSpace(raw))
+	if err != nil || host == "" {
+		return "", errors.New("control address must be in host:port format")
+	}
+	if strings.ContainsAny(host, " \t\r\n/?#@") {
+		return "", errors.New("control host contains invalid characters")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return "", errors.New("control port must be between 1 and 65535")
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port)), nil
 }
 
 func validateWebURL(rawURL string) (string, error) {
@@ -318,10 +458,28 @@ func validateWebURL(rawURL string) (string, error) {
 		return "", err
 	}
 	if u.Scheme != "https" && u.Scheme != "http" {
-		return "", errors.New("URL scheme must be http or https")
+		return "", errors.New("URL scheme must be https (HTTP is allowed only for loopback testing)")
 	}
-	if u.Host == "" {
+	if u.Host == "" || u.Hostname() == "" {
 		return "", errors.New("URL host cannot be empty")
+	}
+	if u.User != nil || u.Fragment != "" || u.Opaque != "" {
+		return "", errors.New("URL must not contain user information, fragments, or opaque data")
+	}
+	if u.RawQuery != "" {
+		return "", errors.New("base dashboard URL must not contain a query string")
+	}
+	if u.Scheme == "http" {
+		ip := net.ParseIP(u.Hostname())
+		if ip == nil || !ip.IsLoopback() {
+			return "", errors.New("unencrypted HTTP is permitted only for loopback dashboard testing")
+		}
+	}
+	if port := u.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || value < 1 || value > 65535 {
+			return "", errors.New("URL port must be between 1 and 65535")
+		}
 	}
 	return strings.TrimRight(u.String(), "/"), nil
 }
@@ -348,17 +506,23 @@ func candidateNodePaths() []string {
 
 func loadSavedToken() (string, string) {
 	for _, p := range candidateTokenPaths() {
-		if data, err := os.ReadFile(p); err == nil {
-			saved := strings.TrimSpace(string(data))
-			if isValidToken(saved) {
-				return saved, p
-			}
+		file, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		saved, ok := readToken(file)
+		_ = file.Close()
+		if ok {
+			return saved, p
 		}
 	}
 	return "", ""
 }
 
 func saveToken(tok string) string {
+	if !isValidToken(tok) {
+		return ""
+	}
 	for _, p := range candidateTokenPaths() {
 		dir := filepath.Dir(p)
 		if dir != "." && dir != "" {
@@ -367,7 +531,10 @@ func saveToken(tok string) string {
 			}
 		}
 		if err := os.WriteFile(p, []byte(tok), 0600); err == nil {
-			return p
+			if err := os.Chmod(p, 0600); err == nil {
+				return p
+			}
+			_ = os.Remove(p)
 		}
 	}
 	return ""
@@ -375,10 +542,13 @@ func saveToken(tok string) string {
 
 func loadSavedNodeAddr() string {
 	for _, p := range candidateNodePaths() {
-		if data, err := os.ReadFile(p); err == nil {
+		if data, err := os.ReadFile(p); err == nil && len(data) <= 4096 {
 			raw := strings.TrimSpace(string(data))
 			if raw != "" {
-				return resolveNodeInput(raw).ControlAddr
+				control, err := validateControlAddr(resolveNodeInput(raw).ControlAddr)
+				if err == nil {
+					return control
+				}
 			}
 		}
 	}
@@ -398,7 +568,10 @@ func saveNodeAddr(ctrlAddr string) string {
 			}
 		}
 		if err := os.WriteFile(p, []byte(ctrlAddr), 0600); err == nil {
-			return p
+			if err := os.Chmod(p, 0600); err == nil {
+				return p
+			}
+			_ = os.Remove(p)
 		}
 	}
 	return ""
@@ -417,10 +590,16 @@ func splitOptionalNodeToken(raw string) (string, string) {
 	s := strings.TrimSpace(raw)
 	if strings.Contains(s, "|") {
 		parts := strings.SplitN(s, "|", 2)
-		nPart := strings.TrimSpace(parts[0])
-		tPart := strings.TrimSpace(parts[1])
-		if nPart != "" && isValidToken(tPart) {
-			return resolveNodeInput(nPart).ControlAddr, tPart
+		nodePart := strings.TrimSpace(parts[0])
+		tokenPart := strings.TrimSpace(parts[1])
+		if nodePart != "" && isValidToken(tokenPart) {
+			node := resolveNodeInput(nodePart)
+			// Only built-in region aliases may override the control endpoint
+			// from a token response. Custom endpoints must be explicitly set
+			// by the user with -control.
+			if node.Code != "CUSTOM" {
+				return node.ControlAddr, tokenPart
+			}
 		}
 	}
 	return "", s
@@ -467,8 +646,8 @@ func tuneTCPConn(conn net.Conn) {
 		_ = tcpConn.SetNoDelay(true)
 		_ = tcpConn.SetKeepAlive(true)
 		_ = tcpConn.SetKeepAlivePeriod(15 * time.Second)
-		_ = tcpConn.SetReadBuffer(4 * 1024 * 1024)
-		_ = tcpConn.SetWriteBuffer(4 * 1024 * 1024)
+		_ = tcpConn.SetReadBuffer(tcpSocketBufferBytes)
+		_ = tcpConn.SetWriteBuffer(tcpSocketBufferBytes)
 	}
 }
 
@@ -514,7 +693,7 @@ func buildLocalUDPCandidates(localUDPIP string, targetPort int) []candConn {
 		if err != nil {
 			continue
 		}
-		tuneUDPConn(c, 4*1024*1024)
+		tuneUDPConn(c, udpSocketBufferBytes)
 		conns = append(conns, candConn{label: s.addr, conn: c})
 	}
 	return conns
@@ -522,7 +701,9 @@ func buildLocalUDPCandidates(localUDPIP string, targetPort int) []candConn {
 
 func randomHex(nBytes int) string {
 	b := make([]byte, nBytes)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -572,7 +753,15 @@ func obtainOrClaimToken(customControl, customWeb, flagToken string) (string, str
 	}
 
 	nodes := getActiveNodeList(customControl, customWeb)
+	if len(nodes) == 0 {
+		log.Fatalf("[Bedrock Node Tunnel] No trusted HTTPS claim dashboard is configured. For custom nodes, pass both -control host:port and -web https://your-dashboard.")
+		return "", ""
+	}
 	claimCode := strings.ToUpper(randomHex(3))
+	if claimCode == "" {
+		log.Fatal("[Bedrock Node Tunnel] Could not generate a secure claim code.")
+		return "", ""
+	}
 
 	fmt.Println("==========================================================================")
 	fmt.Println("  BEDROCK NODE TUNNEL — FIRST TIME SETUP (MULTI-REGION)")
@@ -591,12 +780,24 @@ func obtainOrClaimToken(customControl, customWeb, flagToken string) (string, str
 		openBrowser(firstLink)
 	}
 
-	client := &http.Client{Timeout: 4 * time.Second}
-
 	for {
 		for _, n := range nodes {
 			if n.WebURL == "" {
 				continue
+			}
+			baseURL, parseErr := url.Parse(n.WebURL)
+			if parseErr != nil {
+				continue
+			}
+			client := &http.Client{
+				Timeout: 4 * time.Second,
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					if len(via) >= 3 || req.URL.Scheme != baseURL.Scheme ||
+						!strings.EqualFold(req.URL.Host, baseURL.Host) {
+						return errors.New("claim poll redirected outside the configured dashboard origin")
+					}
+					return nil
+				},
 			}
 			pollUrl := fmt.Sprintf("%s/api/poll-claim?code=%s", strings.TrimRight(n.WebURL, "/"), url.QueryEscape(claimCode))
 			resp, err := client.Get(pollUrl)
@@ -649,11 +850,26 @@ func writeFramedPacket(w io.Writer, payload []byte) error {
 	}
 	var hdr [2]byte
 	binary.BigEndian.PutUint16(hdr[:], uint16(len(payload)))
-	if _, err := w.Write(hdr[:]); err != nil {
+	if err := writeAll(w, hdr[:]); err != nil {
 		return err
 	}
-	_, err := w.Write(payload)
-	return err
+	return writeAll(w, payload)
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 func readFramedPacket(r io.Reader) ([]byte, error) {
@@ -800,7 +1016,7 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 	if err != nil {
 		return
 	}
-	tuneUDPConn(rawConn, 8*1024*1024)
+	tuneUDPConn(rawConn, rawUDPSocketBufferBytes)
 
 	var (
 		sessionsMu sync.Mutex
@@ -904,6 +1120,23 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 			sessionsMu.Lock()
 			sess, exists := sessions[key]
 			if !exists {
+				// Bound the number of player sessions and local UDP sockets this
+				// process can create from incoming relay traffic.
+				if len(sessions) >= maxRawPlayerSessions {
+					var oldestKey rawPlayerKey
+					var oldestSession *rawLocalSession
+					oldestTime := nowNano
+					for key, candidate := range sessions {
+						lastActive := candidate.lastActive.Load()
+						if oldestSession == nil || lastActive < oldestTime {
+							oldestKey, oldestSession, oldestTime = key, candidate, lastActive
+						}
+					}
+					if oldestSession != nil {
+						oldestSession.Close()
+						delete(sessions, oldestKey)
+					}
+				}
 				conns := buildLocalUDPCandidates(localUDPIP, targetPort)
 				if len(conns) == 0 {
 					sessionsMu.Unlock()
@@ -917,7 +1150,7 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 				for idx, cc := range conns {
 					go func(i int, c candConn, s *rawLocalSession, k rawPlayerKey) {
 						replyBuf := make([]byte, 65535)
-						outFrame := make([]byte, 65535+9)
+						outFrame := make([]byte, maxUDPPacketPayload)
 						outFrame[0] = RawUDPMagicData
 						binary.BigEndian.PutUint16(outFrame[1:3], k.pubPort)
 						copy(outFrame[3:7], k.playerIP[:])
@@ -929,6 +1162,7 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 							if rErr != nil {
 								errStr := rErr.Error()
 								if strings.Contains(errStr, "forcibly closed") || strings.Contains(errStr, "connection refused") {
+									time.Sleep(100 * time.Millisecond)
 									continue
 								}
 								return
@@ -936,6 +1170,9 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 							s.lastActive.Store(time.Now().UnixNano())
 							if s.winnerIdx.Swap(int32(i)) == -1 {
 								log.Printf("[Tunnel Client] <- [RAW UDP] WebRTC reply (%d bytes) from Bedrock at %s", rn, c.label)
+							}
+							if rn > maxUDPPacketPayload-9 {
+								continue
 							}
 							copy(outFrame[9:9+rn], replyBuf[:rn])
 							_, _ = rawConn.Write(outFrame[:9+rn])

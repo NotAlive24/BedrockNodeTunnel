@@ -5,7 +5,6 @@ on:
     paths:
       - "desktop/**"
       - ".github/workflows/desktop-ci.yml"
-      - ".github/workflows/desktop-release.yml"
       - ".github/workflows/desktop-native-release.yml"
   push:
     branches: [main]
@@ -22,8 +21,8 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version: "1.26.x"
           cache-dependency-path: desktop/go.mod
@@ -64,8 +63,25 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
+      - name: Validate PowerShell installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD "install.ps1"), [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { $parseErrors | Format-List | Out-String | Write-Error }
+      - name: Validate embedded uninstall helper syntax
+        shell: pwsh
+        run: |
+          $source = Get-Content "desktop/uninstall_windows.go" -Raw
+          $match = [regex]::Match($source, '(?s)const windowsUninstallScript = `(?<script>.*?)`')
+          if (!$match.Success) { throw "Could not extract the embedded Windows uninstall script." }
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseInput($match.Groups["script"].Value, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { $parseErrors | Format-List | Out-String | Write-Error }
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version: "1.26.x"
           cache-dependency-path: desktop/go.mod

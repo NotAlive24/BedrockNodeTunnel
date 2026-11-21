@@ -1,28 +1,22 @@
-name: Nethernet Desktop Native Installers
+name: Nethernet Desktop Native Packages
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "desktop-native-v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   linux:
-    name: Linux DEB and Arch package
+    name: Linux DEB and Arch packages
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version: "1.26.x"
           cache: true
           cache-dependency-path: desktop/go.mod
-      - name: Resolve desktop dependencies
-        working-directory: desktop
-        run: go mod tidy
       - name: Test desktop
         working-directory: desktop
         run: go test ./...
@@ -32,7 +26,7 @@ jobs:
           set -euo pipefail
           mkdir -p bin build/linux
           go run ./tools/generate-icon
-          go build -trimpath -ldflags="-s -w" -o bin/NethernetDesktop .
+          go build -trimpath -ldflags="-s -w -X main.desktopVersion=v2.0.0" -o bin/NethernetDesktop .
           cat > build/linux/NethernetDesktop.desktop <<'EOF'
           [Desktop Entry]
           Type=Application
@@ -47,12 +41,11 @@ jobs:
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.44.1
           nfpm package --config build/linux/nfpm/nfpm.yaml --packager deb --target bin
           nfpm package --config build/linux/nfpm/nfpm.yaml --packager archlinux --target bin
-          find bin -maxdepth 1 -type f -printf '%f\n'
           test -n "$(find bin -maxdepth 1 -name '*.deb' -print -quit)"
           test -n "$(find bin -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
-          name: Nethernet-Desktop-Linux-Packages
+          name: Nethernet-Desktop-Linux-Native-Packages
           path: |
             desktop/bin/*.deb
             desktop/bin/*.pkg.tar.zst
@@ -60,11 +53,11 @@ jobs:
           retention-days: 14
 
   windows:
-    name: Windows NSIS installer
+    name: Windows per-user NSIS installer
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version: "1.26.x"
           cache: true
@@ -78,9 +71,6 @@ jobs:
             throw "NSIS installation did not contain makensis.exe at $nsisPath"
           }
           Add-Content -Path $env:GITHUB_PATH -Value $nsisPath
-      - name: Resolve desktop dependencies
-        working-directory: desktop
-        run: go mod tidy
       - name: Test desktop
         working-directory: desktop
         run: go test ./...
@@ -89,12 +79,12 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path bin | Out-Null
-          go build -trimpath -ldflags="-s -w -H windowsgui" -o bin/NethernetDesktop.exe .
+          go build -trimpath -ldflags="-s -w -H windowsgui -X main.desktopVersion=v2.0.0" -o bin/NethernetDesktop.exe .
           if ($LASTEXITCODE -ne 0) { throw "Windows desktop build failed" }
           $desktopExe = (Resolve-Path "bin/NethernetDesktop.exe").Path
           Push-Location "build/windows/nsis"
           try {
-            & makensis "-DARG_DESKTOP_BINARY=$desktopExe" "project.nsi"
+            & makensis "-DARG_DESKTOP_BINARY=$desktopExe" "-DPRODUCT_VERSION=2.0.0" "project.nsi"
             if ($LASTEXITCODE -ne 0) { throw "NSIS installer build failed" }
           } finally {
             Pop-Location
@@ -102,30 +92,9 @@ jobs:
           if (!(Test-Path "bin/NethernetDesktop-installer.exe")) {
             throw "Expected NSIS installer was not created."
           }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
-          name: Nethernet-Desktop-Windows-Installer
+          name: Nethernet-Desktop-Windows-Native-Installer
           path: desktop/bin/NethernetDesktop-installer.exe
           if-no-files-found: error
           retention-days: 14
-
-  publish:
-    name: Publish native desktop packages
-    if: startsWith(github.ref, 'refs/tags/desktop-native-v')
-    needs: [linux, windows]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - name: Generate checksums
-        run: |
-          cd dist
-          sha256sum * > SHA256SUMS
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Nethernet Desktop Native ${{ github.ref_name }}
-          generate_release_notes: true
-          files: dist/*

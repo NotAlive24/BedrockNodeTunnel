@@ -23,6 +23,87 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
 $InstallDir = [IO.Path]::GetFullPath($InstallDir)
 $BinaryPath = Join-Path $InstallDir "nethernet-client.exe"
 
+function Test-TrustedGitHubAssetUri {
+    param([Uri]$Uri)
+
+    if ($Uri.Scheme -ne "https") { return $false }
+    $hostName = $Uri.Host.ToLowerInvariant()
+    return (
+        $hostName -eq "github.com" -or
+        $hostName -eq "objects.githubusercontent.com" -or
+        $hostName -eq "release-assets.githubusercontent.com" -or
+        $hostName.EndsWith(".githubusercontent.com")
+    )
+}
+
+function Download-HttpsAsset {
+    param(
+        [string]$Uri,
+        [string]$OutFile,
+        [long]$MaxBytes = 104857600
+    )
+
+    $current = [Uri]$Uri
+    for ($redirect = 0; $redirect -le 5; $redirect++) {
+        if (-not (Test-TrustedGitHubAssetUri -Uri $current)) {
+            throw "Refusing non-HTTPS or untrusted GitHub asset URL: $current"
+        }
+
+        $request = [System.Net.HttpWebRequest]::Create($current)
+        $request.AllowAutoRedirect = $false
+        $request.Timeout = 120000
+        $request.ReadWriteTimeout = 120000
+        $request.UserAgent = "BedrockNodeTunnel-Installer/2.0.0"
+
+        $response = $null
+        $stream = $null
+        $file = $null
+        try {
+            try {
+                $response = $request.GetResponse()
+            } catch [System.Net.WebException] {
+                $response = $_.Exception.Response
+                if ($null -eq $response) { throw }
+            }
+
+            $status = [int]$response.StatusCode
+            if ($status -in @(301, 302, 303, 307, 308)) {
+                $location = $response.Headers["Location"]
+                if ([string]::IsNullOrWhiteSpace($location)) {
+                    throw "GitHub asset redirect did not contain a Location header."
+                }
+                $current = [Uri]::new($current, $location)
+                continue
+            }
+            if ($status -ne 200) {
+                throw "GitHub asset download returned HTTP $status."
+            }
+            if ($response.ContentLength -gt $MaxBytes) {
+                throw "GitHub asset exceeded the configured download size limit."
+            }
+
+            $stream = $response.GetResponseStream()
+            $file = [IO.File]::Open($OutFile, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            $buffer = New-Object byte[] 65536
+            [long]$total = 0
+            while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                $total += $read
+                if ($total -gt $MaxBytes) {
+                    throw "GitHub asset exceeded the configured download size limit."
+                }
+                $file.Write($buffer, 0, $read)
+            }
+            return
+        } finally {
+            if ($file) { $file.Dispose() }
+            if ($stream) { $stream.Dispose() }
+            if ($response) { $response.Close() }
+        }
+    }
+
+    throw "GitHub asset exceeded the maximum number of HTTPS redirects."
+}
+
 function Remove-UserPathEntry {
     param([string]$PathToRemove)
 
@@ -80,8 +161,8 @@ try {
     $DownloadPath = Join-Path $TempDir $Asset
     $ChecksumsPath = Join-Path $TempDir "SHA256SUMS"
 
-    Invoke-WebRequest -Uri "$ReleaseBase/$Asset" -OutFile $DownloadPath -UseBasicParsing
-    Invoke-WebRequest -Uri "$ReleaseBase/SHA256SUMS" -OutFile $ChecksumsPath -UseBasicParsing
+    Download-HttpsAsset -Uri "$ReleaseBase/$Asset" -OutFile $DownloadPath -MaxBytes 104857600
+    Download-HttpsAsset -Uri "$ReleaseBase/SHA256SUMS" -OutFile $ChecksumsPath -MaxBytes 1048576
 
     $checksumLine = Get-Content -LiteralPath $ChecksumsPath | Where-Object {
         $_ -match ("^([a-fA-F0-9]{64})\s+\*?" + [regex]::Escape($Asset) + "$")

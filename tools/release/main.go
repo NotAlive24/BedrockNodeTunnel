@@ -36,7 +36,7 @@ const (
 )
 
 var (
-	versionRe    = regexp.MustCompile(`^[0-9][0-9A-Za-z.]*$`)
+	versionRe    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$`)
 	maintainerRe = regexp.MustCompile(`^[^<>]+ <[^<>@\s]+@[^<>\s]+>$`)
 )
 
@@ -64,7 +64,7 @@ type tarEntry struct {
 func main() {
 	c := config{}
 	var targets string
-	flag.StringVar(&c.Version, "version", "1.3", "release version without a leading v")
+	flag.StringVar(&c.Version, "version", "2.0.0", "release version without a leading v")
 	flag.StringVar(&c.OutDir, "out", "dist", "output directory")
 	flag.StringVar(&c.Maintainer, "maintainer", envOr("BNT_MAINTAINER", defaultMaintainer), "maintainer as \"Name <email>\" (or set BNT_MAINTAINER)")
 	flag.StringVar(&c.URL, "repo", defaultRepo, "project URL used in package metadata and the PKGBUILD source")
@@ -229,7 +229,7 @@ func run(c config) error {
 }
 
 func buildBinary(goos, goarch, dst, version string) error {
-	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w -X main.version="+version, "-o", dst, ".")
+	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w -X main.version=v"+strings.TrimPrefix(version, "v"), "-o", dst, ".")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS="+goos, "GOARCH="+goarch)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	if err := cmd.Run(); err != nil {

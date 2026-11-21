@@ -1,4 +1,4 @@
-name: Release
+name: Bedrock Node Tunnel and Nethernet Desktop Release
 
 on:
   push:
@@ -6,45 +6,200 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-release:
-    runs-on: ubuntu-latest
+  cli:
+    name: Build CLI and Linux packages
+    runs-on: ubuntu-24.04
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Run tests
+      - name: Test CLI
         run: go test ./...
-
-      - name: Build Linux and Windows binaries and Linux packages
-        shell: bash
+      - name: Vet CLI
+        run: go vet ./...
+      - name: Build CLI release assets
         run: |
           set -euo pipefail
-          version="$(echo "$GITHUB_REF_NAME" | sed 's/^v//')"
-          go run ./tools/release \
-            -version "$version" \
-            -out dist \
-            -targets deb,arch,windows
+          version="${GITHUB_REF_NAME#v}"
+          go run ./tools/release -version "$version" -out dist -targets deb,arch,windows
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-cli-assets
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Generate release checksums
+  desktop-linux:
+    name: Build Linux desktop packages and portable bundle
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
+        with:
+          go-version: "1.26.x"
+          cache: true
+          cache-dependency-path: desktop/go.mod
+      - name: Test desktop
+        working-directory: desktop
+        run: go test ./...
+      - name: Build native packages and portable bundle
+        working-directory: desktop
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p bin build/linux stage
+          go run ./tools/generate-icon
+          go build -trimpath -ldflags="-s -w -X main.desktopVersion=v${version}" -o bin/NethernetDesktop .
+          sed -i "s/^version:.*/version: ${version}/" build/linux/nfpm/nfpm.yaml
+          cat > build/linux/NethernetDesktop.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Nethernet Desktop
+          Comment=Local browser control suite for Bedrock Node Tunnel
+          Exec=NethernetDesktop
+          Icon=nethernet-desktop
+          Terminal=false
+          Categories=Network;Utility;
+          StartupNotify=false
+          EOF
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.44.1
+          nfpm package --config build/linux/nfpm/nfpm.yaml --packager deb --target bin
+          nfpm package --config build/linux/nfpm/nfpm.yaml --packager archlinux --target bin
+
+          cp bin/NethernetDesktop stage/NethernetDesktop
+          (cd .. && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=v${version}" -o desktop/stage/nethernet-client .)
+          cat > stage/README.txt <<EOF
+          Nethernet Desktop v${version}
+
+          Start NethernetDesktop. It binds only to 127.0.0.1 on an
+          automatically selected port and opens the control UI in your
+          system browser. The UI is not exposed to your LAN.
+
+          Keep NethernetDesktop and nethernet-client in the same directory.
+          The system browser is required; no embedded WebView runtime is used.
+
+          Security note: the current relay wire protocol sends the tunnel
+          token in its existing TCP handshake and UDP heartbeat. This build
+          does not add TLS/DTLS to that protocol; use trusted networks and
+          treat the token as a password. End-to-end transport encryption
+          requires a coordinated server-side protocol update.
+          EOF
+          tar -C stage -czf "bin/Nethernet-Desktop-linux-x64.tar.gz" .
+          test -n "$(find bin -maxdepth 1 -name '*.deb' -print -quit)"
+          test -n "$(find bin -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)"
+          test -s bin/Nethernet-Desktop-linux-x64.tar.gz
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-desktop-linux-assets
+          path: |
+            desktop/bin/*.deb
+            desktop/bin/*.pkg.tar.zst
+            desktop/bin/Nethernet-Desktop-linux-x64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  desktop-windows:
+    name: Build Windows desktop installer and portable bundle
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
+        with:
+          go-version: "1.26.x"
+          cache: true
+          cache-dependency-path: desktop/go.mod
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y
+          $nsisPath = "C:\Program Files (x86)\NSIS"
+          if (!(Test-Path (Join-Path $nsisPath "makensis.exe"))) {
+            throw "NSIS installation did not contain makensis.exe at $nsisPath"
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $nsisPath
+      - name: Test desktop
+        working-directory: desktop
+        run: go test ./...
+      - name: Build native installer and portable bundle
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          New-Item -ItemType Directory -Force -Path bin, stage | Out-Null
+          go build -trimpath -ldflags="-s -w -H windowsgui -X main.desktopVersion=v$version" -o bin/NethernetDesktop.exe .
+          if ($LASTEXITCODE -ne 0) { throw "Windows desktop build failed" }
+
+          $desktopExe = (Resolve-Path "bin/NethernetDesktop.exe").Path
+          Push-Location "build/windows/nsis"
+          try {
+            & makensis "-DARG_DESKTOP_BINARY=$desktopExe" "-DPRODUCT_VERSION=$version" "project.nsi"
+            if ($LASTEXITCODE -ne 0) { throw "NSIS installer build failed" }
+          } finally {
+            Pop-Location
+          }
+          if (!(Test-Path "bin/NethernetDesktop-installer.exe")) {
+            throw "Expected NSIS installer was not created."
+          }
+
+          Copy-Item "bin/NethernetDesktop.exe" "stage/NethernetDesktop.exe"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          $env:CGO_ENABLED = "0"
+          go build -trimpath -ldflags="-s -w -X main.version=v$version" -o "stage/nethernet-client.exe" ..
+          if ($LASTEXITCODE -ne 0) { throw "Windows tunnel engine build failed" }
+          @"
+          Nethernet Desktop v$version
+
+          Start NethernetDesktop.exe. It binds only to 127.0.0.1 on an
+          automatically selected port and opens the control UI in your
+          system browser. The UI is not exposed to your LAN.
+
+          Keep NethernetDesktop.exe and nethernet-client.exe in the same directory.
+          A modern system browser is required; no WebView2 runtime is embedded.
+
+          Security note: the current relay wire protocol sends the tunnel token
+          in its existing TCP handshake and UDP heartbeat. This build does
+          not add TLS/DTLS to that protocol; use trusted networks and treat
+          the token as a password. End-to-end transport encryption requires
+          a coordinated server-side protocol update.
+          "@ | Set-Content -Encoding UTF8 "stage/README.txt"
+          Compress-Archive -Path "stage/*" -DestinationPath "bin/Nethernet-Desktop-windows-x64.zip" -Force
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: release-desktop-windows-assets
+          path: |
+            desktop/bin/NethernetDesktop-installer.exe
+            desktop/bin/Nethernet-Desktop-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish unified v2 release
+    needs: [cli, desktop-linux, desktop-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Generate SHA-256 checksums
         run: |
           set -euo pipefail
           cd dist
           find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
             | sort -z \
             | xargs -0 sha256sum > SHA256SUMS
-
+          test -s SHA256SUMS
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.4
         with:
-          name: Bedrock Node Tunnel
+          name: Bedrock Node Tunnel ${{ github.ref_name }} — Nethernet Desktop
           generate_release_notes: true
           files: dist/*

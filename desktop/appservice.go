@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,13 +24,20 @@ import (
 )
 
 const (
-	desktopVersion = "1.0.0"
-	upstreamRepo   = "NotAlive24/BedrockNodeTunnel"
-	releaseAPI     = "https://api.github.com/repos/" + upstreamRepo + "/releases/latest"
+	upstreamRepo = "NotAlive24/BedrockNodeTunnel"
+	releaseAPI   = "https://api.github.com/repos/" + upstreamRepo + "/releases/latest"
 )
 
-var ansiPattern = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
-var secretPattern = regexp.MustCompile("(?i)(token\\s*[:=]\\s*)[^\\s,;]+")
+var desktopVersion = "v2.0.0"
+
+var (
+	ansiPattern       = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
+	secretPattern     = regexp.MustCompile("(?i)(token[\"']?\\s*[:=]\\s*[\"']?)[^\\s,;\"'}]+")
+	authPattern       = regexp.MustCompile("(?i)(authorization\\s*[:=]\\s*)[A-Za-z]+\\s+[^\\s,;]+")
+	claimPattern      = regexp.MustCompile("(?i)([?&]claim=)[^&#\\s]+")
+	releaseTagPattern = regexp.MustCompile("^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$")
+	mojibakeReplacer  = strings.NewReplacer("â€¢", "•", "â€“", "–", "â€”", "—", "â€™", "’", "â€œ", "“", "â€", "”", "â€¦", "…", "Â ", " ")
+)
 
 type Profile struct {
 	ID           string `json:"id"`
@@ -40,8 +48,27 @@ type Profile struct {
 	LocalUDPPort int    `json:"localUDPPort"`
 }
 
+const defaultTheme = "green"
+
+var supportedThemes = map[string]bool{
+	"green": true,
+	"cyan": true,
+	"blue": true,
+	"purple": true,
+	"orange": true,
+	"rose": true,
+}
+
 type AppSettings struct {
 	EnginePath string `json:"enginePath"`
+	Theme      string `json:"theme"`
+}
+
+func validateTheme(theme string) error {
+	if !supportedThemes[theme] {
+		return fmt.Errorf("unsupported theme %q", theme)
+	}
+	return nil
 }
 
 type appConfig struct {
@@ -88,17 +115,24 @@ type AppSnapshot struct {
 }
 
 type AppService struct {
-	mu         sync.RWMutex
-	configDir  string
-	configPath string
-	config     appConfig
-	cmd        *exec.Cmd
-	done       chan struct{}
-	startedAt  time.Time
-	logs       []LogEntry
-	nextLogID  int64
-	lastError  string
-	connection string
+	mu                sync.RWMutex
+	operationMu       sync.Mutex
+	engineCachePath   string
+	engineCacheSize   int64
+	engineCacheModTime time.Time
+	engineCache       EngineInfo
+	engineCacheErr    error
+	engineCacheValid  bool
+	configDir         string
+	configPath        string
+	config            appConfig
+	cmd               *exec.Cmd
+	done              chan struct{}
+	startedAt         time.Time
+	logs              []LogEntry
+	nextLogID         int64
+	lastError         string
+	connection        string
 }
 
 func NewAppService() *AppService {
@@ -109,7 +143,10 @@ func NewAppService() *AppService {
 		root = filepath.Join(home, ".config")
 	}
 	dir := filepath.Join(root, "bedrocknode-tunnel")
-	_ = os.MkdirAll(dir, 0700)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return &AppService{configDir: dir, configPath: filepath.Join(dir, "desktop.json"), connection: "Stopped", lastError: "Could not create config directory: " + err.Error()}
+	}
+	_ = os.Chmod(dir, 0700)
 	s := &AppService{configDir: dir, configPath: filepath.Join(dir, "desktop.json"), connection: "Stopped"}
 	s.loadConfig()
 	return s
@@ -118,14 +155,43 @@ func NewAppService() *AppService {
 func (s *AppService) loadConfig() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	data, err := os.ReadFile(s.configPath)
-	if err == nil { _ = json.Unmarshal(data, &s.config) }
-	if s.config.SchemaVersion == 0 { s.config.SchemaVersion = 1 }
-	if len(s.config.Profiles) == 0 {
-		p := defaultProfile()
-		s.config.Profiles, s.config.ActiveProfile = []Profile{p}, p.ID
+	if err == nil {
+		var loaded appConfig
+		if decodeErr := json.Unmarshal(data, &loaded); decodeErr == nil && loaded.SchemaVersion <= 1 {
+			s.config = loaded
+		} else {
+			// Preserve malformed or unsupported user data before initializing
+			// defaults; never silently destroy the only copy of the old config.
+			backupPath := s.configPath + ".corrupt"
+			if _, statErr := os.Stat(backupPath); errors.Is(statErr, os.ErrNotExist) {
+				_ = os.WriteFile(backupPath, data, 0600)
+				_ = os.Chmod(backupPath, 0600)
+			}
+			if decodeErr != nil {
+				s.lastError = "Existing desktop configuration was invalid and was backed up: " + decodeErr.Error()
+			} else {
+				s.lastError = "Existing desktop configuration uses an unsupported newer schema; a fresh config was created"
+			}
+		}
 	}
-	if s.findProfileLocked(s.config.ActiveProfile) == nil { s.config.ActiveProfile = s.config.Profiles[0].ID }
+	if s.config.SchemaVersion == 0 {
+		s.config.SchemaVersion = 1
+	}
+	if len(s.config.Profiles) == 0 {
+		profile := defaultProfile()
+		s.config.Profiles, s.config.ActiveProfile = []Profile{profile}, profile.ID
+	}
+	if s.findProfileLocked(s.config.ActiveProfile) == nil {
+		s.config.ActiveProfile = s.config.Profiles[0].ID
+	}
+	if s.config.Settings.Theme == "" {
+		s.config.Settings.Theme = defaultTheme
+	} else if err := validateTheme(s.config.Settings.Theme); err != nil {
+		s.lastError = "Saved theme was not recognized; the default Green theme was restored"
+		s.config.Settings.Theme = defaultTheme
+	}
 	_ = s.saveConfigLocked()
 }
 
@@ -136,9 +202,36 @@ func defaultProfile() Profile {
 func (s *AppService) saveConfigLocked() error {
 	s.config.SchemaVersion = 1
 	data, err := json.MarshalIndent(s.config, "", "  ")
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.configPath), 0700); err != nil {
+		return err
+	}
 	tmp := s.configPath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil { return err }
+	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	return os.Rename(tmp, s.configPath)
 }
 
@@ -161,9 +254,32 @@ func (s *AppService) GetProfiles() []Profile {
 }
 
 func (s *AppService) SaveProfile(profile Profile) ([]Profile, error) {
-	if err := validateProfile(profile); err != nil { return nil, err }
-	s.mu.Lock(); defer s.mu.Unlock()
-	if profile.ID == "" { profile.ID = fmt.Sprintf("profile-%d", time.Now().UnixNano()) }
+	if err := validateProfile(profile); err != nil {
+		return nil, err
+	}
+
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	s.mu.RLock()
+	activeEdit := profile.ID != "" && profile.ID == s.config.ActiveProfile
+	running := s.cmd != nil
+	s.mu.RUnlock()
+	if activeEdit {
+		background, err := backgroundStatus()
+		if err != nil {
+			return nil, fmt.Errorf("could not check background tunnel status: %w", err)
+		}
+		if running || background {
+			return nil, errors.New("stop the tunnel before editing the active profile")
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if profile.ID == "" {
+		profile.ID = fmt.Sprintf("profile-%d", time.Now().UnixNano())
+	}
 	found := false
 	for i := range s.config.Profiles {
 		if s.config.Profiles[i].ID == profile.ID {
@@ -171,13 +287,22 @@ func (s *AppService) SaveProfile(profile Profile) ([]Profile, error) {
 			break
 		}
 	}
-	if !found { s.config.Profiles = append(s.config.Profiles, profile) }
-	if s.config.ActiveProfile == "" { s.config.ActiveProfile = profile.ID }
-	if err := s.saveConfigLocked(); err != nil { return nil, err }
+	if !found {
+		s.config.Profiles = append(s.config.Profiles, profile)
+	}
+	if s.config.ActiveProfile == "" {
+		s.config.ActiveProfile = profile.ID
+	}
+	if err := s.saveConfigLocked(); err != nil {
+		return nil, err
+	}
 	return append([]Profile(nil), s.config.Profiles...), nil
 }
 
 func (s *AppService) SetActiveProfile(id string) error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
 	active, err := backgroundStatus()
 	if err != nil {
 		return fmt.Errorf("could not check background tunnel status: %w", err)
@@ -198,14 +323,45 @@ func (s *AppService) SetActiveProfile(id string) error {
 }
 
 func (s *AppService) DeleteProfile(id string) ([]Profile, error) {
-	s.mu.Lock(); defer s.mu.Unlock()
-	if len(s.config.Profiles) <= 1 { return nil, errors.New("at least one connection profile must remain") }
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	s.mu.RLock()
+	activeDelete := id == s.config.ActiveProfile
+	running := s.cmd != nil
+	s.mu.RUnlock()
+	if activeDelete {
+		background, err := backgroundStatus()
+		if err != nil {
+			return nil, fmt.Errorf("could not check background tunnel status: %w", err)
+		}
+		if running || background {
+			return nil, errors.New("stop the tunnel before deleting the active profile")
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.config.Profiles) <= 1 {
+		return nil, errors.New("at least one connection profile must remain")
+	}
 	index := -1
-	for i, p := range s.config.Profiles { if p.ID == id { index = i; break } }
-	if index < 0 { return nil, errors.New("profile not found") }
+	for i, profile := range s.config.Profiles {
+		if profile.ID == id {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return nil, errors.New("profile not found")
+	}
 	s.config.Profiles = append(s.config.Profiles[:index], s.config.Profiles[index+1:]...)
-	if s.config.ActiveProfile == id { s.config.ActiveProfile = s.config.Profiles[0].ID }
-	if err := s.saveConfigLocked(); err != nil { return nil, err }
+	if s.config.ActiveProfile == id {
+		s.config.ActiveProfile = s.config.Profiles[0].ID
+	}
+	if err := s.saveConfigLocked(); err != nil {
+		return nil, err
+	}
 	return append([]Profile(nil), s.config.Profiles...), nil
 }
 
@@ -215,12 +371,49 @@ func (s *AppService) GetSettings() AppSettings {
 }
 
 func (s *AppService) SaveSettings(settings AppSettings) error {
-	if settings.EnginePath != "" {
-		if _, err := inspectEngine(settings.EnginePath); err != nil { return err }
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	settings.Theme = strings.ToLower(strings.TrimSpace(settings.Theme))
+	if settings.Theme == "" {
+		settings.Theme = defaultTheme
 	}
-	s.mu.Lock(); defer s.mu.Unlock()
+	if err := validateTheme(settings.Theme); err != nil {
+		return err
+	}
+
+	s.mu.RLock()
+	previousPath := s.config.Settings.EnginePath
+	running := s.cmd != nil
+	s.mu.RUnlock()
+	enginePathChanged := previousPath != settings.EnginePath
+	if enginePathChanged {
+		background, statusErr := backgroundStatus()
+		if statusErr != nil {
+			return fmt.Errorf("could not check background tunnel status: %w", statusErr)
+		}
+		if running || background {
+			return errors.New("stop the tunnel before changing the engine path")
+		}
+		if settings.EnginePath != "" {
+			if _, err := inspectEngine(settings.EnginePath); err != nil {
+				return err
+			}
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previousSettings := s.config.Settings
 	s.config.Settings = settings
-	return s.saveConfigLocked()
+	if err := s.saveConfigLocked(); err != nil {
+		s.config.Settings = previousSettings
+		return err
+	}
+	if previousPath != settings.EnginePath {
+		s.engineCacheValid = false
+	}
+	return nil
 }
 
 func validateProfile(p Profile) error {
@@ -322,7 +515,43 @@ func inspectEngine(path string) (EngineInfo, error) {
 	return EngineInfo{Path:absolute, Version:version}, nil
 }
 
+func (s *AppService) inspectResolvedEngine() (EngineInfo, error) {
+	path := s.resolveEngine()
+	if path == "" {
+		return EngineInfo{}, errors.New("tunnel engine is not installed")
+	}
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return EngineInfo{}, err
+	}
+
+	s.mu.RLock()
+	if s.engineCacheValid &&
+		s.engineCachePath == path &&
+		s.engineCacheSize == fileInfo.Size() &&
+		s.engineCacheModTime.Equal(fileInfo.ModTime()) {
+		cached, cachedErr := s.engineCache, s.engineCacheErr
+		s.mu.RUnlock()
+		return cached, cachedErr
+	}
+	s.mu.RUnlock()
+
+	engine, inspectErr := inspectEngine(path)
+	s.mu.Lock()
+	s.engineCachePath = path
+	s.engineCacheSize = fileInfo.Size()
+	s.engineCacheModTime = fileInfo.ModTime()
+	s.engineCache = engine
+	s.engineCacheErr = inspectErr
+	s.engineCacheValid = true
+	s.mu.Unlock()
+	return engine, inspectErr
+}
+
 func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
 	s.mu.RLock()
 	running := s.cmd != nil
 	s.mu.RUnlock()
@@ -333,72 +562,197 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 	if running || background {
 		return EngineInfo{}, errors.New("stop the tunnel before installing or updating the engine")
 	}
-	client := &http.Client{Timeout:90*time.Second}
+
+	client := &http.Client{Timeout: 90 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, releaseAPI, nil)
-	if err != nil { return EngineInfo{}, err }
-	req.Header.Set("User-Agent", "Nethernet-Desktop")
+	if err != nil {
+		return EngineInfo{}, err
+	}
+	req.Header.Set("User-Agent", "Nethernet-Desktop/2.0.0")
 	resp, err := client.Do(req)
-	if err != nil { return EngineInfo{}, fmt.Errorf("could not query latest release: %w", err) }
+	if err != nil {
+		return EngineInfo{}, fmt.Errorf("could not query latest release: %w", err)
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK { return EngineInfo{}, fmt.Errorf("latest release lookup returned HTTP %d", resp.StatusCode) }
+	if resp.StatusCode != http.StatusOK {
+		return EngineInfo{}, fmt.Errorf("latest release lookup returned HTTP %d", resp.StatusCode)
+	}
+
 	var release struct {
 		TagName string `json:"tag_name"`
 		Assets []struct {
 			Name string `json:"name"`
-			URL string `json:"browser_download_url"`
+			URL  string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&release); err != nil { return EngineInfo{}, fmt.Errorf("invalid release metadata: %w", err) }
-	arch := runtime.GOARCH
-	if arch != "amd64" && arch != "arm64" { return EngineInfo{}, fmt.Errorf("unsupported engine architecture: %s", arch) }
-	asset := engineAssetName()
-	if strings.TrimSuffix(asset, ".exe") != "nethernet-client-"+runtime.GOOS+"-"+arch {
-		return EngineInfo{}, fmt.Errorf("unsupported engine architecture: %s", arch)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&release); err != nil {
+		return EngineInfo{}, fmt.Errorf("invalid release metadata: %w", err)
 	}
-	assetURL := ""
-	for _, item := range release.Assets { if item.Name == asset { assetURL = item.URL; break } }
-	if assetURL == "" { return EngineInfo{}, fmt.Errorf("release %s does not contain %s", release.TagName, asset) }
+	if !releaseTagPattern.MatchString(release.TagName) {
+		return EngineInfo{}, fmt.Errorf("latest release %q is not a stable client release", release.TagName)
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		return EngineInfo{}, fmt.Errorf("unsupported engine architecture: %s", runtime.GOARCH)
+	}
 
-	download := func(url string, limit int64) ([]byte, error) {
-		rq, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil { return nil, err }
-		rq.Header.Set("User-Agent", "Nethernet-Desktop")
-		r, err := client.Do(rq)
-		if err != nil { return nil, err }
-		defer r.Body.Close()
-		if r.StatusCode != http.StatusOK { return nil, fmt.Errorf("download returned HTTP %d", r.StatusCode) }
-		return io.ReadAll(io.LimitReader(r.Body, limit+1))
+	asset := engineAssetName()
+	assetURL := ""
+	for _, item := range release.Assets {
+		if item.Name == asset {
+			assetURL = item.URL
+			break
+		}
 	}
+	if assetURL == "" {
+		return EngineInfo{}, fmt.Errorf("release %s does not contain %s", release.TagName, asset)
+	}
+
+	assetURI, err := url.Parse(assetURL)
+	if err != nil || assetURI.Scheme != "https" || assetURI.Host != "github.com" ||
+		assetURI.User != nil || assetURI.RawQuery != "" || assetURI.Fragment != "" ||
+		!strings.HasPrefix(assetURI.Path, "/"+upstreamRepo+"/releases/download/"+release.TagName+"/") ||
+		!strings.HasSuffix(assetURI.Path, "/"+asset) {
+		return EngineInfo{}, errors.New("release metadata contained an untrusted engine download URL")
+	}
+
+	checksumURI := *assetURI
+	checksumURI.Path = strings.TrimSuffix(checksumURI.Path, asset) + "SHA256SUMS"
+	checksumURI.RawPath = ""
+
+	downloadClient := &http.Client{
+		Timeout: 90 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 || req.URL.Scheme != "https" {
+				return errors.New("engine download used an unsafe redirect")
+			}
+			host := strings.ToLower(req.URL.Hostname())
+			allowed := host == "github.com" ||
+				host == "objects.githubusercontent.com" ||
+				host == "release-assets.githubusercontent.com" ||
+				strings.HasSuffix(host, ".githubusercontent.com")
+			if !allowed {
+				return errors.New("engine download redirected outside trusted GitHub asset hosts")
+			}
+			return nil
+		},
+	}
+
+	download := func(downloadURL string, limit int64) ([]byte, error) {
+		rq, err := http.NewRequest(http.MethodGet, downloadURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		rq.Header.Set("User-Agent", "Nethernet-Desktop/2.0.0")
+		r, err := downloadClient.Do(rq)
+		if err != nil {
+			return nil, err
+		}
+		defer r.Body.Close()
+		if r.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("download returned HTTP %d", r.StatusCode)
+		}
+		data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) > limit {
+			return nil, fmt.Errorf("download exceeded the %d-byte size limit", limit)
+		}
+		return data, nil
+	}
+
 	binaryData, err := download(assetURL, 100<<20)
-	if err != nil { return EngineInfo{}, fmt.Errorf("engine download failed: %w", err) }
-	if len(binaryData) == 0 || len(binaryData) > 100<<20 { return EngineInfo{}, errors.New("downloaded engine has an invalid size") }
-	checksumsURL := strings.TrimSuffix(assetURL, asset) + "SHA256SUMS"
-	checksumData, err := download(checksumsURL, 1<<20)
-	if err != nil { return EngineInfo{}, fmt.Errorf("could not download SHA256SUMS: %w", err) }
+	if err != nil {
+		return EngineInfo{}, fmt.Errorf("engine download failed: %w", err)
+	}
+	if len(binaryData) == 0 {
+		return EngineInfo{}, errors.New("downloaded engine is empty")
+	}
+	checksumData, err := download(checksumURI.String(), 1<<20)
+	if err != nil {
+		return EngineInfo{}, fmt.Errorf("could not download SHA256SUMS: %w", err)
+	}
 	expected := checksumForAsset(string(checksumData), asset)
-	if expected == "" { return EngineInfo{}, fmt.Errorf("release checksum manifest has no entry for %s", asset) }
+	if expected == "" {
+		return EngineInfo{}, fmt.Errorf("release checksum manifest has no entry for %s", asset)
+	}
 	sum := sha256.Sum256(binaryData)
-	if !strings.EqualFold(expected, hex.EncodeToString(sum[:])) { return EngineInfo{}, errors.New("engine SHA-256 verification failed; downloaded file was not installed") }
+	if !strings.EqualFold(expected, hex.EncodeToString(sum[:])) {
+		return EngineInfo{}, errors.New("engine SHA-256 verification failed; downloaded file was not installed")
+	}
 
 	destDir := filepath.Join(s.configDir, "bin")
-	if err := os.MkdirAll(destDir, 0700); err != nil { return EngineInfo{}, err }
+	if err := os.MkdirAll(destDir, 0700); err != nil {
+		return EngineInfo{}, err
+	}
 	dest := filepath.Join(destDir, asset)
 	tmp := dest + ".download"
-	if err := os.WriteFile(tmp, binaryData, 0700); err != nil { return EngineInfo{}, err }
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(tmp, 0755); err != nil { _ = os.Remove(tmp); return EngineInfo{}, err }
+	if runtime.GOOS == "windows" {
+		tmp += ".exe"
 	}
 	backup := dest + ".previous"
-	_ = os.Remove(backup)
-	if _, statErr := os.Stat(dest); statErr == nil {
-		if err := os.Rename(dest, backup); err != nil { _ = os.Remove(tmp); return EngineInfo{}, fmt.Errorf("could not preserve existing engine before update: %w", err) }
+	_ = os.Remove(tmp)
+	if err := os.WriteFile(tmp, binaryData, 0600); err != nil {
+		return EngineInfo{}, err
 	}
-	if err := os.Rename(tmp, dest); err != nil { _ = os.Remove(tmp); _ = os.Rename(backup, dest); return EngineInfo{}, err }
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(tmp, 0755); err != nil {
+			_ = os.Remove(tmp)
+			return EngineInfo{}, err
+		}
+	}
+
+	// Execute the verified temporary image before touching the working engine.
+	engine, err := inspectEngine(tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return EngineInfo{}, fmt.Errorf("downloaded engine failed its version check; existing engine was preserved: %w", err)
+	}
+	if strings.TrimPrefix(engine.Version, "v") != strings.TrimPrefix(release.TagName, "v") {
+		_ = os.Remove(tmp)
+		return EngineInfo{}, fmt.Errorf("downloaded engine reports version %q, expected %q; existing engine was preserved", engine.Version, release.TagName)
+	}
+
 	_ = os.Remove(backup)
-	engine, err := inspectEngine(dest)
-	if err != nil { return EngineInfo{}, err }
-	s.mu.Lock(); s.config.Settings.EnginePath = dest; err = s.saveConfigLocked(); s.mu.Unlock()
-	if err != nil { return EngineInfo{}, err }
+	hadPrevious := false
+	if _, statErr := os.Stat(dest); statErr == nil {
+		if err := os.Rename(dest, backup); err != nil {
+			_ = os.Remove(tmp)
+			return EngineInfo{}, fmt.Errorf("could not preserve existing engine before update: %w", err)
+		}
+		hadPrevious = true
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		_ = os.Remove(tmp)
+		return EngineInfo{}, statErr
+	}
+
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		if hadPrevious {
+			_ = os.Rename(backup, dest)
+		}
+		return EngineInfo{}, fmt.Errorf("could not activate verified engine: %w", err)
+	}
+
+	s.mu.Lock()
+	previousEnginePath := s.config.Settings.EnginePath
+	s.config.Settings.EnginePath = dest
+	if err := s.saveConfigLocked(); err != nil {
+		s.config.Settings.EnginePath = previousEnginePath
+		s.mu.Unlock()
+		_ = os.Remove(dest)
+		if hadPrevious {
+			_ = os.Rename(backup, dest)
+		}
+		return EngineInfo{}, fmt.Errorf("could not save engine configuration; previous engine restored: %w", err)
+	}
+	s.engineCacheValid = false
+	s.mu.Unlock()
+
+	if hadPrevious {
+		_ = os.Remove(backup)
+	}
+	engine.Path = dest
 	engine.Updated = true
 	s.addLog("INFO", "Installed tunnel engine "+engine.Version)
 	return engine, nil
@@ -416,6 +770,9 @@ func checksumForAsset(manifest, asset string) string {
 }
 
 func (s *AppService) StartTunnel() error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
 	s.mu.Lock()
 	if s.cmd != nil { s.mu.Unlock(); return errors.New("tunnel process is already running") }
 	profile := s.activeProfileLocked()
@@ -481,14 +838,30 @@ func (s *AppService) captureOutput(reader io.Reader, finished chan<- struct{}) {
 
 func cleanLogLine(line string) string {
 	line = ansiPattern.ReplaceAllString(line, "")
-	line = strings.TrimSpace(secretPattern.ReplaceAllString(strings.ReplaceAll(line, "", ""), "$1[redacted]"))
-	if line == "" { return "" }
+	line = strings.ReplaceAll(line, "\r", "")
+	line = mojibakeReplacer.Replace(line)
+	line = secretPattern.ReplaceAllString(line, "$1[redacted]")
+	line = authPattern.ReplaceAllString(line, "$1[redacted]")
+	line = claimPattern.ReplaceAllString(line, "$1[redacted]")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
 	lower := strings.ToLower(line)
 	relevant := []string{"[tunnel client]", "[bedrock node tunnel]", "authenticated tunnel", "claim", "reconnect", "disconnected", "error", "warning", "fast-lane", "already running"}
 	keep := false
-	for _, marker := range relevant { if strings.Contains(lower, marker) { keep = true; break } }
-	if !keep { return "" }
-	if len(line) > 600 { line = line[:600] + "…" }
+	for _, marker := range relevant {
+		if strings.Contains(lower, marker) {
+			keep = true
+			break
+		}
+	}
+	if !keep {
+		return ""
+	}
+	if len(line) > 600 {
+		line = line[:600] + "…"
+	}
 	return line
 }
 
@@ -578,6 +951,9 @@ func (s *AppService) RestartTunnel() error {
 }
 
 func (s *AppService) StartBackground() error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
 	if !backgroundSupported() {
 		return errors.New("background service management is not available on this system")
 	}
@@ -634,8 +1010,8 @@ func (s *AppService) GetSnapshot() AppSnapshot {
 	}
 	engine := s.resolveEngine()
 	engineVersion, engineFound := "", false
-	if engine != "" {
-		if info, err := inspectEngine(engine); err == nil { engineFound, engineVersion = true, info.Version }
+	if info, err := s.inspectResolvedEngine(); err == nil {
+		engineFound, engineVersion = true, info.Version
 	}
 	running, mode, uptime, startedText := cmd != nil, "Stopped", "—", ""
 	if background { mode, connection = "Background service", "Background service active" } else if running {
@@ -684,6 +1060,32 @@ func controlAddress(region string) string {
 		"UK":"104.238.173.37:7000","BR":"216.128.170.42:7000","ASIA":"45.32.121.108:7000",
 	}
 	return controls[strings.ToUpper(strings.TrimSpace(region))]
+}
+
+func (s *AppService) UninstallApplication(purgeData bool) error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	background, err := backgroundStatus()
+	if err != nil {
+		return fmt.Errorf("could not verify background tunnel state: %w", err)
+	}
+	if backgroundSupported() || background {
+		if err := removeBackground(); err != nil {
+			return fmt.Errorf("could not remove background tunnel service: %w", err)
+		}
+		s.addLog("INFO", "Background tunnel service removed for application uninstall")
+	}
+
+	if err := s.stopForegroundTunnel(); err != nil {
+		return fmt.Errorf("could not stop foreground tunnel: %w", err)
+	}
+
+	if err := launchPlatformUninstaller(os.Getpid(), s.configDir, purgeData); err != nil {
+		return err
+	}
+	s.addLog("INFO", "Application uninstaller started")
+	return nil
 }
 
 func (s *AppService) ServiceShutdown() error {

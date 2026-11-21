@@ -14,13 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Validate Linux installer syntax
+        run: bash -n install.sh
+
+      - name: Validate desktop UI JavaScript
+        run: node --check desktop/frontend/app.js
 
       - name: Run tests
         run: go test ./...
@@ -29,7 +35,7 @@ jobs:
         run: go vet ./...
 
       - name: Smoke-test release packaging
-        run: go run ./tools/release -version 1.3 -out /tmp/bnt-release -targets deb,arch,windows
+        run: go run ./tools/release -version 2.0.0 -out /tmp/bnt-release -targets deb,arch,windows
 
       - name: Cross-compile Linux and Windows
         shell: bash
@@ -48,7 +54,7 @@ jobs:
           done
 
       - name: Upload cross-platform binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: nethernet-client-cross-platform
           path: /tmp/bnt-cross-build/*

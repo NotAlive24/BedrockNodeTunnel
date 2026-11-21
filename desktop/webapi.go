@@ -155,6 +155,26 @@ func newWebHandler(app *AppService, expectedHost string, frontend fs.FS, shutdow
 		app.ClearLogs()
 		writeAPIResponse(w, http.StatusOK, map[string]bool{"cleared": true})
 	}))
+	mux.HandleFunc("/api/uninstall", api.method(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			PurgeData bool `json:"purgeData"`
+		}
+		if err := decodeAPIJSON(w, r, &input); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := app.UninstallApplication(input.PurgeData); err != nil {
+			writeAPIError(w, http.StatusConflict, err)
+			return
+		}
+		writeAPIResponse(w, http.StatusAccepted, map[string]bool{"uninstalling": true})
+		if api.shutdown != nil {
+			go func() {
+				time.Sleep(250 * time.Millisecond)
+				api.shutdown()
+			}()
+		}
+	}))
 	mux.HandleFunc("/api/shutdown", api.method(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
 		writeAPIResponse(w, http.StatusAccepted, map[string]bool{"shuttingDown": true})
 		if api.shutdown != nil {
@@ -183,7 +203,7 @@ func newWebHandler(app *AppService, expectedHost string, frontend fs.FS, shutdow
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Cache-Control", "no-store")
 		}

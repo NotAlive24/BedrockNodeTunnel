@@ -69,7 +69,8 @@ func testAppService(t *testing.T) *AppService {
 func testWebHandler(t *testing.T, shutdown func()) http.Handler {
 	t.Helper()
 	assets := fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>Nethernet</title>")},
+		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>Nethernet</title><script src=\"/app.js\" defer></script>")},
+		"app.js":     &fstest.MapFile{Data: []byte("fetch(\"/api/health\")")},
 	}
 	return newWebHandler(testAppService(t), "127.0.0.1:34567", assets, shutdown)
 }
@@ -97,6 +98,23 @@ func TestWebHandlerServesFrontendOnLoopback(t *testing.T) {
 	}
 	if recorder.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatal("CORS access must not be enabled")
+	}
+}
+
+func TestWebHandlerServesExternalScriptWithStrictCSP(t *testing.T) {
+	handler := testWebHandler(t, nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, localRequest(http.MethodGet, "/app.js"))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /app.js status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "fetch(\"/api/health\")") {
+		t.Fatalf("app.js content missing: %q", recorder.Body.String())
+	}
+	policy := recorder.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "script-src 'self'") || strings.Contains(policy, "script-src 'self' 'unsafe-inline'") {
+		t.Fatalf("unexpected script policy: %q", policy)
 	}
 }
 
@@ -202,6 +220,47 @@ func TestWebHandlerRejectsMalformedJSONAndUnknownFields(t *testing.T) {
 	}
 	for _, body := range tests {
 		request := localRequest(http.MethodPost, "/api/profiles/save")
+		request.Header.Set("Content-Type", "application/json")
+		request.Body = io.NopCloser(strings.NewReader(body))
+		request.ContentLength = int64(len(body))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("body %q status = %d, want %d", body, recorder.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestWebHandlerSavesThemeThroughSettingsAPI(t *testing.T) {
+	service := testAppService(t)
+	handler := newWebHandler(service, "127.0.0.1:34567", fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<title>Nethernet</title>")},
+	}, nil)
+	body := `{"settings":{"enginePath":"","theme":"orange"}}`
+	request := localRequest(http.MethodPost, "/api/settings/save")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://127.0.0.1:34567")
+	request.Body = io.NopCloser(strings.NewReader(body))
+	request.ContentLength = int64(len(body))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("save settings status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := service.GetSettings().Theme; got != "orange" {
+		t.Fatalf("saved theme = %q, want orange", got)
+	}
+}
+
+func TestWebHandlerRejectsUninstallWithoutStrictJSONBody(t *testing.T) {
+	handler := testWebHandler(t, nil)
+	tests := []string{
+		`{"unexpected":true}`,
+		`{"purgeData":"yes"}`,
+		`{"purgeData":true} {"extra":true}`,
+	}
+	for _, body := range tests {
+		request := localRequest(http.MethodPost, "/api/uninstall")
 		request.Header.Set("Content-Type", "application/json")
 		request.Body = io.NopCloser(strings.NewReader(body))
 		request.ContentLength = int64(len(body))

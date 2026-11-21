@@ -9,6 +9,14 @@ import (
 )
 
 func TestBackgroundStatusWithoutSystemctl(t *testing.T) {
+	previousSystemdDir := systemdRunDirectory
+	systemdRunDirectory = t.TempDir()
+	defer func() { systemdRunDirectory = previousSystemdDir }()
+	runtimeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(runtimeDir, "bus"), nil, 0600); err != nil {
+		t.Fatalf("create fake user bus: %v", err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 	path := t.TempDir()
 	t.Setenv("PATH", path)
 
@@ -25,6 +33,15 @@ func TestBackgroundStatusWithoutSystemctl(t *testing.T) {
 }
 
 func TestBackgroundStatusParsesSystemctlState(t *testing.T) {
+	previousSystemdDir := systemdRunDirectory
+	systemdRunDirectory = t.TempDir()
+	defer func() { systemdRunDirectory = previousSystemdDir }()
+	runtimeDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(runtimeDir, "bus"), nil, 0600); err != nil {
+		t.Fatalf("create fake user bus: %v", err)
+	}
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+
 	dir := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$BNT_SYSTEMD_STATUS\"\n" +
