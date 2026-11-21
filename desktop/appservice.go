@@ -24,10 +24,11 @@ import (
 )
 
 const (
-	desktopVersion = "2.0.0"
-	upstreamRepo   = "NotAlive24/BedrockNodeTunnel"
-	releaseAPI     = "https://api.github.com/repos/" + upstreamRepo + "/releases/latest"
+	upstreamRepo = "NotAlive24/BedrockNodeTunnel"
+	releaseAPI   = "https://api.github.com/repos/" + upstreamRepo + "/releases/latest"
 )
+
+var desktopVersion = "v2.0.0"
 
 var (
 	ansiPattern       = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
