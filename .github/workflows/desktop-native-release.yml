@@ -11,8 +11,8 @@ jobs:
     name: Linux DEB and Arch packages
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version: "1.26.x"
           cache: true
@@ -43,7 +43,7 @@ jobs:
           nfpm package --config build/linux/nfpm/nfpm.yaml --packager archlinux --target bin
           test -n "$(find bin -maxdepth 1 -name '*.deb' -print -quit)"
           test -n "$(find bin -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: Nethernet-Desktop-Linux-Native-Packages
           path: |
@@ -56,8 +56,8 @@ jobs:
     name: Windows per-user NSIS installer
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
         with:
           go-version: "1.26.x"
           cache: true
@@ -92,7 +92,7 @@ jobs:
           if (!(Test-Path "bin/NethernetDesktop-installer.exe")) {
             throw "Expected NSIS installer was not created."
           }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.2
         with:
           name: Nethernet-Desktop-Windows-Native-Installer
           path: desktop/bin/NethernetDesktop-installer.exe
