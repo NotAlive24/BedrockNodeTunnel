@@ -150,8 +150,18 @@ jobs:
           $env:GOOS = "windows"
           $env:GOARCH = "amd64"
           $env:CGO_ENABLED = "0"
-          go build -trimpath -ldflags="-s -w -X main.version=v$version" -o "stage/nethernet-client.exe" ..
-          if ($LASTEXITCODE -ne 0) { throw "Windows tunnel engine build failed" }
+          # The CLI is the repository-root Go module, separate from desktop/go.mod.
+          # Build from the repository root and write the executable into desktop/stage.
+          Push-Location ..
+          try {
+            go build -trimpath -ldflags="-s -w -X main.version=v$version" -o "desktop/stage/nethernet-client.exe" .
+            if ($LASTEXITCODE -ne 0) { throw "Windows tunnel engine build failed" }
+          } finally {
+            Pop-Location
+          }
+          if (!(Test-Path "stage/nethernet-client.exe")) {
+            throw "Expected Windows tunnel engine was not created."
+          }
           @"
           Nethernet Desktop v$version
 
