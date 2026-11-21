@@ -32,6 +32,40 @@ const (
 var ansiPattern = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
 var secretPattern = regexp.MustCompile("(?i)(token\\s*[:=]\\s*)[^\\s,;]+")
 var claimPattern = regexp.MustCompile("(?i)([?&]claim=)[^&#\\s]+")
+var releaseTagPattern = regexp.MustCompile(`^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?package main
+
+import (
+	"bufio"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	desktopVersion = "2.0.0"
+	upstreamRepo   = "NotAlive24/BedrockNodeTunnel"
+	releaseAPI     = "https://api.github.com/repos/" + upstreamRepo + "/releases/latest"
+)
+
+var ansiPattern = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
+var secretPattern = regexp.MustCompile("(?i)(token\\s*[:=]\\s*)[^\\s,;]+")
+)
 var mojibakeReplacer = strings.NewReplacer("â€¢", "•", "â€“", "–", "â€”", "—", "â€™", "’", "â€œ", "“", "â€", "”", "â€¦", "…", "Â ", " ")
 
 type Profile struct {
@@ -92,6 +126,13 @@ type AppSnapshot struct {
 
 type AppService struct {
 	mu         sync.RWMutex
+	updateMu   sync.Mutex
+	engineCachePath string
+	engineCacheSize int64
+	engineCacheModTime time.Time
+	engineCache EngineInfo
+	engineCacheErr error
+	engineCacheValid bool
 	configDir  string
 	configPath string
 	config     appConfig
@@ -326,6 +367,9 @@ func inspectEngine(path string) (EngineInfo, error) {
 }
 
 func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
+	s.updateMu.Lock()
+	defer s.updateMu.Unlock()
+
 	s.mu.RLock()
 	running := s.cmd != nil
 	s.mu.RUnlock()
@@ -336,72 +380,179 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 	if running || background {
 		return EngineInfo{}, errors.New("stop the tunnel before installing or updating the engine")
 	}
-	client := &http.Client{Timeout:90*time.Second}
+
+	client := &http.Client{Timeout: 90 * time.Second}
 	req, err := http.NewRequest(http.MethodGet, releaseAPI, nil)
-	if err != nil { return EngineInfo{}, err }
-	req.Header.Set("User-Agent", "Nethernet-Desktop")
+	if err != nil {
+		return EngineInfo{}, err
+	}
+	req.Header.Set("User-Agent", "Nethernet-Desktop/2.0.0")
 	resp, err := client.Do(req)
-	if err != nil { return EngineInfo{}, fmt.Errorf("could not query latest release: %w", err) }
+	if err != nil {
+		return EngineInfo{}, fmt.Errorf("could not query latest release: %w", err)
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK { return EngineInfo{}, fmt.Errorf("latest release lookup returned HTTP %d", resp.StatusCode) }
+	if resp.StatusCode != http.StatusOK {
+		return EngineInfo{}, fmt.Errorf("latest release lookup returned HTTP %d", resp.StatusCode)
+	}
+
 	var release struct {
 		TagName string `json:"tag_name"`
 		Assets []struct {
 			Name string `json:"name"`
-			URL string `json:"browser_download_url"`
+			URL  string `json:"browser_download_url"`
 		} `json:"assets"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&release); err != nil { return EngineInfo{}, fmt.Errorf("invalid release metadata: %w", err) }
-	arch := runtime.GOARCH
-	if arch != "amd64" && arch != "arm64" { return EngineInfo{}, fmt.Errorf("unsupported engine architecture: %s", arch) }
-	asset := engineAssetName()
-	if strings.TrimSuffix(asset, ".exe") != "nethernet-client-"+runtime.GOOS+"-"+arch {
-		return EngineInfo{}, fmt.Errorf("unsupported engine architecture: %s", arch)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&release); err != nil {
+		return EngineInfo{}, fmt.Errorf("invalid release metadata: %w", err)
 	}
-	assetURL := ""
-	for _, item := range release.Assets { if item.Name == asset { assetURL = item.URL; break } }
-	if assetURL == "" { return EngineInfo{}, fmt.Errorf("release %s does not contain %s", release.TagName, asset) }
+	if !releaseTagPattern.MatchString(release.TagName) {
+		return EngineInfo{}, fmt.Errorf("latest release %q is not a stable client release", release.TagName)
+	}
+	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
+		return EngineInfo{}, fmt.Errorf("unsupported engine architecture: %s", runtime.GOARCH)
+	}
 
-	download := func(url string, limit int64) ([]byte, error) {
-		rq, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil { return nil, err }
-		rq.Header.Set("User-Agent", "Nethernet-Desktop")
-		r, err := client.Do(rq)
-		if err != nil { return nil, err }
-		defer r.Body.Close()
-		if r.StatusCode != http.StatusOK { return nil, fmt.Errorf("download returned HTTP %d", r.StatusCode) }
-		return io.ReadAll(io.LimitReader(r.Body, limit+1))
+	asset := engineAssetName()
+	assetURL := ""
+	for _, item := range release.Assets {
+		if item.Name == asset {
+			assetURL = item.URL
+			break
+		}
 	}
+	if assetURL == "" {
+		return EngineInfo{}, fmt.Errorf("release %s does not contain %s", release.TagName, asset)
+	}
+
+	assetURI, err := url.Parse(assetURL)
+	if err != nil || assetURI.Scheme != "https" || assetURI.Host != "github.com" ||
+		assetURI.User != nil || assetURI.RawQuery != "" || assetURI.Fragment != "" ||
+		!strings.HasPrefix(assetURI.Path, "/"+upstreamRepo+"/releases/download/"+release.TagName+"/") ||
+		!strings.HasSuffix(assetURI.Path, "/"+asset) {
+		return EngineInfo{}, errors.New("release metadata contained an untrusted engine download URL")
+	}
+
+	checksumURI := *assetURI
+	checksumURI.Path = strings.TrimSuffix(checksumURI.Path, asset) + "SHA256SUMS"
+	checksumURI.RawPath = ""
+
+	download := func(downloadURL string, limit int64) ([]byte, error) {
+		rq, err := http.NewRequest(http.MethodGet, downloadURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		rq.Header.Set("User-Agent", "Nethernet-Desktop/2.0.0")
+		r, err := client.Do(rq)
+		if err != nil {
+			return nil, err
+		}
+		defer r.Body.Close()
+		if r.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("download returned HTTP %d", r.StatusCode)
+		}
+		data, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) > limit {
+			return nil, fmt.Errorf("download exceeded the %d-byte size limit", limit)
+		}
+		return data, nil
+	}
+
 	binaryData, err := download(assetURL, 100<<20)
-	if err != nil { return EngineInfo{}, fmt.Errorf("engine download failed: %w", err) }
-	if len(binaryData) == 0 || len(binaryData) > 100<<20 { return EngineInfo{}, errors.New("downloaded engine has an invalid size") }
-	checksumsURL := strings.TrimSuffix(assetURL, asset) + "SHA256SUMS"
-	checksumData, err := download(checksumsURL, 1<<20)
-	if err != nil { return EngineInfo{}, fmt.Errorf("could not download SHA256SUMS: %w", err) }
+	if err != nil {
+		return EngineInfo{}, fmt.Errorf("engine download failed: %w", err)
+	}
+	if len(binaryData) == 0 {
+		return EngineInfo{}, errors.New("downloaded engine is empty")
+	}
+	checksumData, err := download(checksumURI.String(), 1<<20)
+	if err != nil {
+		return EngineInfo{}, fmt.Errorf("could not download SHA256SUMS: %w", err)
+	}
 	expected := checksumForAsset(string(checksumData), asset)
-	if expected == "" { return EngineInfo{}, fmt.Errorf("release checksum manifest has no entry for %s", asset) }
+	if expected == "" {
+		return EngineInfo{}, fmt.Errorf("release checksum manifest has no entry for %s", asset)
+	}
 	sum := sha256.Sum256(binaryData)
-	if !strings.EqualFold(expected, hex.EncodeToString(sum[:])) { return EngineInfo{}, errors.New("engine SHA-256 verification failed; downloaded file was not installed") }
+	if !strings.EqualFold(expected, hex.EncodeToString(sum[:])) {
+		return EngineInfo{}, errors.New("engine SHA-256 verification failed; downloaded file was not installed")
+	}
 
 	destDir := filepath.Join(s.configDir, "bin")
-	if err := os.MkdirAll(destDir, 0700); err != nil { return EngineInfo{}, err }
+	if err := os.MkdirAll(destDir, 0700); err != nil {
+		return EngineInfo{}, err
+	}
 	dest := filepath.Join(destDir, asset)
 	tmp := dest + ".download"
-	if err := os.WriteFile(tmp, binaryData, 0700); err != nil { return EngineInfo{}, err }
-	if runtime.GOOS != "windows" {
-		if err := os.Chmod(tmp, 0755); err != nil { _ = os.Remove(tmp); return EngineInfo{}, err }
+	if runtime.GOOS == "windows" {
+		tmp += ".exe"
 	}
 	backup := dest + ".previous"
-	_ = os.Remove(backup)
-	if _, statErr := os.Stat(dest); statErr == nil {
-		if err := os.Rename(dest, backup); err != nil { _ = os.Remove(tmp); return EngineInfo{}, fmt.Errorf("could not preserve existing engine before update: %w", err) }
+	_ = os.Remove(tmp)
+	if err := os.WriteFile(tmp, binaryData, 0600); err != nil {
+		return EngineInfo{}, err
 	}
-	if err := os.Rename(tmp, dest); err != nil { _ = os.Remove(tmp); _ = os.Rename(backup, dest); return EngineInfo{}, err }
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(tmp, 0755); err != nil {
+			_ = os.Remove(tmp)
+			return EngineInfo{}, err
+		}
+	}
+
+	// Execute the verified temporary image before touching the working engine.
+	engine, err := inspectEngine(tmp)
+	if err != nil {
+		_ = os.Remove(tmp)
+		return EngineInfo{}, fmt.Errorf("downloaded engine failed its version check; existing engine was preserved: %w", err)
+	}
+	if strings.TrimPrefix(engine.Version, "v") != strings.TrimPrefix(release.TagName, "v") {
+		_ = os.Remove(tmp)
+		return EngineInfo{}, fmt.Errorf("downloaded engine reports version %q, expected %q; existing engine was preserved", engine.Version, release.TagName)
+	}
+
 	_ = os.Remove(backup)
-	engine, err := inspectEngine(dest)
-	if err != nil { return EngineInfo{}, err }
-	s.mu.Lock(); s.config.Settings.EnginePath = dest; err = s.saveConfigLocked(); s.mu.Unlock()
-	if err != nil { return EngineInfo{}, err }
+	hadPrevious := false
+	if _, statErr := os.Stat(dest); statErr == nil {
+		if err := os.Rename(dest, backup); err != nil {
+			_ = os.Remove(tmp)
+			return EngineInfo{}, fmt.Errorf("could not preserve existing engine before update: %w", err)
+		}
+		hadPrevious = true
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		_ = os.Remove(tmp)
+		return EngineInfo{}, statErr
+	}
+
+	if err := os.Rename(tmp, dest); err != nil {
+		_ = os.Remove(tmp)
+		if hadPrevious {
+			_ = os.Rename(backup, dest)
+		}
+		return EngineInfo{}, fmt.Errorf("could not activate verified engine: %w", err)
+	}
+
+	s.mu.Lock()
+	previousEnginePath := s.config.Settings.EnginePath
+	s.config.Settings.EnginePath = dest
+	if err := s.saveConfigLocked(); err != nil {
+		s.config.Settings.EnginePath = previousEnginePath
+		s.mu.Unlock()
+		_ = os.Remove(dest)
+		if hadPrevious {
+			_ = os.Rename(backup, dest)
+		}
+		return EngineInfo{}, fmt.Errorf("could not save engine configuration; previous engine restored: %w", err)
+	}
+	s.engineCacheValid = false
+	s.mu.Unlock()
+
+	if hadPrevious {
+		_ = os.Remove(backup)
+	}
+	engine.Path = dest
 	engine.Updated = true
 	s.addLog("INFO", "Installed tunnel engine "+engine.Version)
 	return engine, nil
