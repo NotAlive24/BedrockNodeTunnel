@@ -45,14 +45,8 @@ func configureBackground(binary string, args []string) error {
 		return err
 	}
 
-	commandLine, err := taskCommand()
-	if err != nil {
-		return err
-	}
-	if err := task("/Create", "/SC", "ONLOGON", "/TN", taskName, "/TR", commandLine, "/F"); err != nil {
-		return err
-	}
-	return nil
+	_, err = taskCommand()
+	return err
 }
 
 func taskCommand() (string, error) {
@@ -160,7 +154,9 @@ func stopBackground() error {
 }
 
 func restartBackground() error {
-	_ = stopBackground()
+	if err := stopBackground(); err != nil {
+		return err
+	}
 	return task("/Run", "/TN", taskName)
 }
 
