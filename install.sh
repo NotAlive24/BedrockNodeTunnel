@@ -126,24 +126,24 @@ if [[ "$ACTION" == "uninstall" ]]; then
       pid="${proc_dir##*/}"
       executable="$(readlink "$proc_dir/exe" 2>/dev/null || true)"
       executable="${executable% (deleted)}"
-      if [[ "${executable##*/}" == "NethernetDesktop" ]]; then
+      if [[ "$executable" == "/usr/bin/NethernetDesktop" || "$executable" == "/usr/local/bin/NethernetDesktop" ]]; then
         desktop_pids+=("$pid")
       fi
     done
 
     ((${#desktop_pids[@]} > 0)) || return 0
     echo "Stopping running Nethernet Desktop instance(s)..."
-    for pid in ${desktop_pids[@]}; do
+    for pid in "${desktop_pids[@]}"; do
       kill -TERM "$pid" 2>/dev/null || true
     done
 
     for attempt in {1..40}; do
       still_running=()
-      for pid in ${desktop_pids[@]}; do
+      for pid in "${desktop_pids[@]}"; do
         [[ -r "/proc/$pid/exe" ]] || continue
         executable="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
         executable="${executable% (deleted)}"
-        if [[ "${executable##*/}" == "NethernetDesktop" ]]; then
+        if [[ "$executable" == "/usr/bin/NethernetDesktop" || "$executable" == "/usr/local/bin/NethernetDesktop" ]]; then
           still_running+=("$pid")
         fi
       done
@@ -168,9 +168,9 @@ if [[ "$ACTION" == "uninstall" ]]; then
       done
       if ((${#installed_packages[@]} > 0)); then
         if (( EUID == 0 )); then
-          pacman -R --noconfirm ${installed_packages[@]}
+          pacman -R --noconfirm "${installed_packages[@]}"
         elif command -v sudo >/dev/null 2>&1; then
-          sudo pacman -R --noconfirm ${installed_packages[@]}
+          sudo pacman -R --noconfirm "${installed_packages[@]}"
         else
           echo "sudo is required to remove package(s): ${installed_packages[*]}" >&2
           return 1
@@ -184,9 +184,9 @@ if [[ "$ACTION" == "uninstall" ]]; then
       done
       if ((${#installed_packages[@]} > 0)); then
         if (( EUID == 0 )); then
-          apt-get remove -y ${installed_packages[@]}
+          apt-get remove -y "${installed_packages[@]}"
         elif command -v sudo >/dev/null 2>&1; then
-          sudo apt-get remove -y ${installed_packages[@]}
+          sudo apt-get remove -y "${installed_packages[@]}"
         else
           echo "sudo is required to remove package(s): ${installed_packages[*]}" >&2
           return 1
