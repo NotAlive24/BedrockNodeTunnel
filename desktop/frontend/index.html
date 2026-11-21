@@ -44,9 +44,9 @@ async function call(name,...args){try{const fn=API[name];if(typeof fn!=='functio
 function safe(fn){return (...args)=>Promise.resolve(fn(...args)).catch(()=>{})}
 function page(id){document.querySelectorAll('.nav').forEach(n=>n.classList.toggle('active',n.dataset.page===id));document.querySelectorAll('.section').forEach(n=>n.classList.toggle('active',n.id===id));$('title').textContent=id[0].toUpperCase()+id.slice(1)}
 document.querySelectorAll('.nav').forEach(n=>n.addEventListener('click',()=>page(n.dataset.page)));
-let refreshing=false;
+let refreshing=false,localUIStopped=false;
 async function refresh(){
- if(refreshing)return;
+ if(refreshing||localUIStopped)return;
  refreshing=true;
  try{
   snapshot=await API.GetSnapshot();
@@ -89,6 +89,6 @@ async function diagnostics(){const out=await call('RunDiagnostics');$('diag-resu
 $('diag').onclick=safe(diagnostics);$('run-diag').onclick=safe(()=>{page('diagnostics');return diagnostics()});$('refresh-logs').onclick=safe(async()=>renderLogs(await API.GetLogs()));$('clear-logs').onclick=safe(()=>call('ClearLogs'));
 $('install-engine').onclick=safe(async()=>{const b=$('install-engine');b.disabled=true;b.textContent='Installing…';try{const x=await call('InstallOrUpdateEngine');toast('Installed '+x.version)}finally{b.disabled=false;b.textContent='Install / update engine'}});
 $('choose-engine').onclick=safe(async()=>{await call('SaveSettings',{enginePath:$('custom-engine').value.trim()});toast('Engine path saved')});
-$('quit-app').onclick=safe(async()=>{if(!confirm('Stop the local Nethernet Desktop UI server?'))return;await API.Quit();$('state').textContent='Local UI stopped';$('substate').textContent='You can close this browser tab.'});
+$('quit-app').onclick=safe(async()=>{if(!confirm('Stop the local Nethernet Desktop UI server?'))return;await API.Quit();localUIStopped=true;$('state').textContent='Local UI stopped';$('substate').textContent='You can close this browser tab.'});
 refresh();setInterval(refresh,2500);
 </script></body></html>
