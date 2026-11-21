@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"io"
+	"strings"
+	"time"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -48,11 +51,12 @@ func TestIsLoopbackRemote(t *testing.T) {
 	}
 }
 
-func testWebHandler(t *testing.T, shutdown func()) http.Handler {
+func testAppService(t *testing.T) *AppService {
 	t.Helper()
-	service := &AppService{
-		configDir:  t.TempDir(),
-		configPath: t.TempDir() + "/desktop.json",
+	root := t.TempDir()
+	return &AppService{
+		configDir:  root,
+		configPath: root + "/desktop.json",
 		config: appConfig{
 			SchemaVersion: 1,
 			ActiveProfile: "default",
@@ -60,10 +64,14 @@ func testWebHandler(t *testing.T, shutdown func()) http.Handler {
 		},
 		connection: "Stopped",
 	}
+}
+
+func testWebHandler(t *testing.T, shutdown func()) http.Handler {
+	t.Helper()
 	assets := fstest.MapFS{
 		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>Nethernet</title>")},
 	}
-	return newWebHandler(service, "127.0.0.1:34567", assets, shutdown)
+	return newWebHandler(testAppService(t), "127.0.0.1:34567", assets, shutdown)
 }
 
 func localRequest(method, path string) *http.Request {
@@ -157,5 +165,66 @@ func TestWebHandlerRequiresCorrectMethod(t *testing.T) {
 	}
 	if recorder.Header().Get("Allow") != http.MethodGet {
 		t.Fatalf("Allow header = %q, want GET", recorder.Header().Get("Allow"))
+	}
+}
+
+func TestWebHandlerSavesProfileThroughJSONAPI(t *testing.T) {
+	service := testAppService(t)
+	assets := fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<title>Nethernet</title>")},
+	}
+	handler := newWebHandler(service, "127.0.0.1:34567", assets, nil)
+	body := `{"profile":{"id":"","name":"Test Server","region":"AUTO","localTCP":"127.0.0.1:19132","localUDPIP":"","localUDPPort":47334}}`
+	request := localRequest(http.MethodPost, "/api/profiles/save")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://127.0.0.1:34567")
+	request.Body = io.NopCloser(strings.NewReader(body))
+	request.ContentLength = int64(len(body))
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("save profile status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if len(service.GetProfiles()) != 2 {
+		t.Fatalf("profile count = %d, want 2", len(service.GetProfiles()))
+	}
+	if service.GetProfiles()[1].Name != "Test Server" {
+		t.Fatalf("saved profile name = %q, want Test Server", service.GetProfiles()[1].Name)
+	}
+}
+
+func TestWebHandlerRejectsMalformedJSONAndUnknownFields(t *testing.T) {
+	handler := testWebHandler(t, nil)
+	tests := []string{
+		`{"profile":`,
+		`{"profile":{"name":"Home","localTCP":"127.0.0.1:19132","localUDPPort":47334,"unexpected":true}}`,
+	}
+	for _, body := range tests {
+		request := localRequest(http.MethodPost, "/api/profiles/save")
+		request.Header.Set("Content-Type", "application/json")
+		request.Body = io.NopCloser(strings.NewReader(body))
+		request.ContentLength = int64(len(body))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("body %q status = %d, want %d", body, recorder.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestWebHandlerShutdownCallback(t *testing.T) {
+	called := make(chan struct{}, 1)
+	handler := testWebHandler(t, func() { called <- struct{}{} })
+	request := localRequest(http.MethodPost, "/api/shutdown")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("shutdown status = %d, want %d", recorder.Code, http.StatusAccepted)
+	}
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown callback was not called")
 	}
 }
