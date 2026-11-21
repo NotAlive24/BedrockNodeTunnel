@@ -126,7 +126,7 @@ func main() {
 		showVersion     bool
 	)
 
-	flag.StringVar(&nodeFlag, "node", "", "Region code (US, TX, UK, BR, ASIA) or custom VPS domain/IP")
+	flag.StringVar(&nodeFlag, "node", "", "Region code or custom VPS domain; custom IPs require explicit -control and an HTTPS -web dashboard")
 	flag.StringVar(&controlAddr, "control", "", "Bedrock Node Tunnel VPS control address (auto-detected across regions if empty)")
 	flag.StringVar(&webUrl, "web", "https://bedrocknode.net", "Bedrock Node Tunnel Web Dashboard URL")
 	flag.StringVar(&token, "token", "", "Tunnel token (leave empty for automatic browser claim)")
@@ -196,7 +196,7 @@ func main() {
 	if pollWebOverride != "" {
 		pollWebOverride, err = validateWebURL(pollWebOverride)
 		if err != nil {
-			log.Fatalf("[Bedrock Node Tunnel] Invalid claim dashboard URL: %v", err)
+			log.Fatalf("[Bedrock Node Tunnel] Invalid claim dashboard URL: %v. Remote dashboards must use HTTPS; for a custom IP, pass -control IP:port and -web https://your-dashboard.", err)
 		}
 	}
 	if err := validateLocalTCPTarget(localSignaling); err != nil {
