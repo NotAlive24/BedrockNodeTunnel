@@ -41,10 +41,15 @@ esac
 download() {
   local url="$1"
   local output="$2"
+  case "$url" in
+    https://*) ;;
+    *) echo "Refusing non-HTTPS download URL: $url" >&2; return 1 ;;
+  esac
   if command -v curl >/dev/null 2>&1; then
-    curl --fail --location --silent --show-error --retry 3 "$url" --output "$output"
+    curl --proto '=https' --proto-redir '=https' --fail --location --silent --show-error \
+      --retry 3 --connect-timeout 15 --max-time 120 "$url" --output "$output"
   elif command -v wget >/dev/null 2>&1; then
-    wget --tries=3 --output-document="$output" "$url"
+    wget --https-only --max-redirect=5 --timeout=15 --tries=3 --output-document="$output" "$url"
   else
     echo "curl or wget is required." >&2
     return 1
