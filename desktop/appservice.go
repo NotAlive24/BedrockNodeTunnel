@@ -32,7 +32,8 @@ var desktopVersion = "v2.0.0"
 
 var (
 	ansiPattern       = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
-	secretPattern     = regexp.MustCompile("(?i)(token\\s*[:=]\\s*)[^\\s,;]+")
+	secretPattern     = regexp.MustCompile("(?i)(token[\"']?\\s*[:=]\\s*[\"']?)[^\\s,;\"'}]+")
+	authPattern       = regexp.MustCompile("(?i)(authorization\\s*[:=]\\s*)[A-Za-z]+\\s+[^\\s,;]+")
 	claimPattern      = regexp.MustCompile("(?i)([?&]claim=)[^&#\\s]+")
 	releaseTagPattern = regexp.MustCompile("^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$")
 	mojibakeReplacer  = strings.NewReplacer("â€¢", "•", "â€“", "–", "â€”", "—", "â€™", "’", "â€œ", "“", "â€", "”", "â€¦", "…", "Â ", " ")
@@ -802,6 +803,7 @@ func cleanLogLine(line string) string {
 	line = strings.ReplaceAll(line, "\r", "")
 	line = mojibakeReplacer.Replace(line)
 	line = secretPattern.ReplaceAllString(line, "$1[redacted]")
+	line = authPattern.ReplaceAllString(line, "$1[redacted]")
 	line = claimPattern.ReplaceAllString(line, "$1[redacted]")
 	line = strings.TrimSpace(line)
 	if line == "" {
