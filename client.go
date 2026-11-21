@@ -36,6 +36,11 @@ const (
 	nodeSaveFile         = "bedrocknode-node.txt"
 	maxTokenLength       = 4096
 	handshakeHint        = 5
+	maxRawPlayerSessions = 128
+	maxUDPPacketPayload  = 65507
+	tcpSocketBufferBytes = 512 * 1024
+	udpSocketBufferBytes = 128 * 1024
+	rawUDPSocketBufferBytes = 512 * 1024
 )
 
 var version = "v1.3.0"
@@ -467,8 +472,8 @@ func tuneTCPConn(conn net.Conn) {
 		_ = tcpConn.SetNoDelay(true)
 		_ = tcpConn.SetKeepAlive(true)
 		_ = tcpConn.SetKeepAlivePeriod(15 * time.Second)
-		_ = tcpConn.SetReadBuffer(4 * 1024 * 1024)
-		_ = tcpConn.SetWriteBuffer(4 * 1024 * 1024)
+		_ = tcpConn.SetReadBuffer(tcpSocketBufferBytes)
+		_ = tcpConn.SetWriteBuffer(tcpSocketBufferBytes)
 	}
 }
 
@@ -514,7 +519,7 @@ func buildLocalUDPCandidates(localUDPIP string, targetPort int) []candConn {
 		if err != nil {
 			continue
 		}
-		tuneUDPConn(c, 4*1024*1024)
+		tuneUDPConn(c, udpSocketBufferBytes)
 		conns = append(conns, candConn{label: s.addr, conn: c})
 	}
 	return conns
@@ -649,11 +654,26 @@ func writeFramedPacket(w io.Writer, payload []byte) error {
 	}
 	var hdr [2]byte
 	binary.BigEndian.PutUint16(hdr[:], uint16(len(payload)))
-	if _, err := w.Write(hdr[:]); err != nil {
+	if err := writeAll(w, hdr[:]); err != nil {
 		return err
 	}
-	_, err := w.Write(payload)
-	return err
+	return writeAll(w, payload)
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
 }
 
 func readFramedPacket(r io.Reader) ([]byte, error) {
@@ -800,7 +820,7 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 	if err != nil {
 		return
 	}
-	tuneUDPConn(rawConn, 8*1024*1024)
+	tuneUDPConn(rawConn, rawUDPSocketBufferBytes)
 
 	var (
 		sessionsMu sync.Mutex
@@ -904,6 +924,23 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 			sessionsMu.Lock()
 			sess, exists := sessions[key]
 			if !exists {
+				// Bound the number of player sessions and local UDP sockets this
+				// process can create from incoming relay traffic.
+				if len(sessions) >= maxRawPlayerSessions {
+					var oldestKey rawPlayerKey
+					var oldestSession *rawLocalSession
+					oldestTime := nowNano
+					for key, candidate := range sessions {
+						lastActive := candidate.lastActive.Load()
+						if oldestSession == nil || lastActive < oldestTime {
+							oldestKey, oldestSession, oldestTime = key, candidate, lastActive
+						}
+					}
+					if oldestSession != nil {
+						oldestSession.Close()
+						delete(sessions, oldestKey)
+					}
+				}
 				conns := buildLocalUDPCandidates(localUDPIP, targetPort)
 				if len(conns) == 0 {
 					sessionsMu.Unlock()
@@ -917,7 +954,7 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 				for idx, cc := range conns {
 					go func(i int, c candConn, s *rawLocalSession, k rawPlayerKey) {
 						replyBuf := make([]byte, 65535)
-						outFrame := make([]byte, 65535+9)
+						outFrame := make([]byte, maxUDPPacketPayload)
 						outFrame[0] = RawUDPMagicData
 						binary.BigEndian.PutUint16(outFrame[1:3], k.pubPort)
 						copy(outFrame[3:7], k.playerIP[:])
@@ -936,6 +973,9 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 							s.lastActive.Store(time.Now().UnixNano())
 							if s.winnerIdx.Swap(int32(i)) == -1 {
 								log.Printf("[Tunnel Client] <- [RAW UDP] WebRTC reply (%d bytes) from Bedrock at %s", rn, c.label)
+							}
+							if rn > maxUDPPacketPayload-9 {
+								continue
 							}
 							copy(outFrame[9:9+rn], replyBuf[:rn])
 							_, _ = rawConn.Write(outFrame[:9+rn])
