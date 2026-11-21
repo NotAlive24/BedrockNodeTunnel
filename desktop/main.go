@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -43,17 +44,13 @@ func runWebUI(app *AppService) error {
 	shutdown := func() {
 		go func() {
 			_ = app.ServiceShutdown()
-			deadline := time.Now().Add(5 * time.Second)
-			_ = server.Close()
-			for time.Now().Before(deadline) {
-				if err := listener.Close(); err == nil || errors.Is(err, net.ErrClosed) {
-					return
-				}
-				time.Sleep(25 * time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if err := server.Shutdown(ctx); err != nil {
+				_ = server.Close()
 			}
 		}()
 	}
-
 	server = &http.Server{
 		Handler:           newWebHandler(app, address, assets, shutdown),
 		ReadHeaderTimeout: 5 * time.Second,
