@@ -94,24 +94,24 @@ type AppSnapshot struct {
 }
 
 type AppService struct {
-	mu         sync.RWMutex
-	updateMu   sync.Mutex
-	engineCachePath string
-	engineCacheSize int64
+	mu                sync.RWMutex
+	updateMu          sync.Mutex
+	engineCachePath   string
+	engineCacheSize   int64
 	engineCacheModTime time.Time
-	engineCache EngineInfo
-	engineCacheErr error
-	engineCacheValid bool
-	configDir  string
-	configPath string
-	config     appConfig
-	cmd        *exec.Cmd
-	done       chan struct{}
-	startedAt  time.Time
-	logs       []LogEntry
-	nextLogID  int64
-	lastError  string
-	connection string
+	engineCache       EngineInfo
+	engineCacheErr    error
+	engineCacheValid  bool
+	configDir         string
+	configPath        string
+	config            appConfig
+	cmd               *exec.Cmd
+	done              chan struct{}
+	startedAt         time.Time
+	logs              []LogEntry
+	nextLogID         int64
+	lastError         string
+	connection        string
 }
 
 func NewAppService() *AppService {
