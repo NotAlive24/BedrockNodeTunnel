@@ -24,6 +24,8 @@ The terminal prints the exact local URL. Keep the launcher process open while us
 - Run local TCP, relay TCP and service API diagnostics.
 - View a bounded live log buffer with token-like values and one-time claim codes redacted.
 - Linux systemd user service and Windows per-user Task Scheduler background mode.
+- Persisted accent themes: Green is the default, with Cyan, Blue, Purple, Orange and Rose alternatives.
+- In-app uninstall for Linux DEB/Arch and Windows NSIS installations. Background services are removed first; saved data is kept unless the user explicitly requests a purge.
 - Per-user configuration; normal operation does not require administrator privileges.
 
 ## Build and test
@@ -43,7 +45,11 @@ Linux DEB/Arch packages use nfpm. The Windows per-user installer uses NSIS. The 
 
 Desktop settings and profiles are stored under the user's config directory in `bedrocknode-tunnel/desktop.json` (normally `~/.config/bedrocknode-tunnel/desktop.json` on Linux). The CLI's tunnel token/config files remain managed by the CLI; the desktop app does not read or display token contents.
 
-The engine updater installs into `bedrocknode-tunnel/bin/`. Linux background mode creates a per-user systemd unit; Windows background mode uses a per-user Task Scheduler task. Background mode is disabled when the required service tooling is unavailable.
+The engine updater installs into `bedrocknode-tunnel/bin/`. Linux background mode creates a per-user systemd unit; Windows background mode uses a per-user Task Scheduler task. Background mode is disabled when the required service tooling is unavailable. The selected theme is stored in `desktop.json`; existing configurations without a theme automatically migrate to Green.
+
+## Uninstall
+
+Open Settings → Uninstall Nethernet Desktop. The app stops/removes the background tunnel service and stops the foreground engine before handing off to the native package uninstaller. Linux uses the supported distro package manager with a polkit prompt; Windows uses the bundled NSIS uninstaller. Saved profiles, engine binaries and CLI credentials are preserved by default. Checking the data-removal option explicitly deletes the `bedrocknode-tunnel` user config directory, including tunnel credentials. Portable builds without a native uninstaller must be removed manually.
 
 ## Security limitation
 
