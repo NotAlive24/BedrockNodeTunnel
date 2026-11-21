@@ -27,29 +27,37 @@ jobs:
         with:
           go-version: "1.26.x"
           cache-dependency-path: desktop/go.mod
-      - name: Install Linux desktop and packaging dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev libfuse2t64 patchelf file wget curl
-      - name: Resolve desktop dependencies and generate go.sum
+      - name: Resolve desktop dependencies
         working-directory: desktop
         run: go mod tidy
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-      - name: Generate bindings
-        working-directory: desktop
-        run: wails3 generate bindings
       - name: Test desktop
         working-directory: desktop
         run: go test ./...
       - name: Build and package Linux formats
         working-directory: desktop
-        run: wails3 task linux:package
+        run: |
+          set -euo pipefail
+          mkdir -p bin build/linux
+          go run ./tools/generate-icon
+          go build -trimpath -ldflags="-s -w" -o bin/NethernetDesktop .
+          cat > build/linux/NethernetDesktop.desktop <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=Nethernet Desktop
+          Comment=Local browser control suite for Bedrock Node Tunnel
+          Exec=NethernetDesktop
+          Icon=nethernet-desktop
+          Terminal=false
+          Categories=Network;Utility;
+          StartupNotify=false
+          EOF
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.44.1
+          nfpm package --config build/linux/nfpm/nfpm.yaml --packager deb --target bin
+          nfpm package --config build/linux/nfpm/nfpm.yaml --packager archlinux --target bin
       - name: Verify Linux package outputs
         working-directory: desktop
         run: |
           set -euo pipefail
-          test -n "$(find bin -maxdepth 1 -name '*.AppImage' -print -quit)"
           test -n "$(find bin -maxdepth 1 -name '*.deb' -print -quit)"
           test -n "$(find bin -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)"
 
@@ -61,7 +69,7 @@ jobs:
         with:
           go-version: "1.26.x"
           cache-dependency-path: desktop/go.mod
-      - name: Resolve desktop dependencies and generate go.sum
+      - name: Resolve desktop dependencies
         working-directory: desktop
         run: go mod tidy
       - name: Install NSIS
@@ -74,20 +82,18 @@ jobs:
           }
           Add-Content -Path $env:GITHUB_PATH -Value $nsisPath
           & (Join-Path $nsisPath "makensis.exe") /VERSION
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-      - name: Generate bindings
-        working-directory: desktop
-        run: wails3 generate bindings
       - name: Test desktop
         working-directory: desktop
         run: go test ./...
       - name: Build Windows installer
         working-directory: desktop
-        run: wails3 task windows:package
-      - name: Verify Windows installer
         shell: pwsh
         run: |
-          if (!(Test-Path "desktop/bin/NethernetDesktop-installer.exe")) {
+          New-Item -ItemType Directory -Force -Path bin | Out-Null
+          go build -trimpath -ldflags="-s -w -H windowsgui" -o bin/NethernetDesktop.exe .
+          if ($LASTEXITCODE -ne 0) { throw "Windows desktop build failed" }
+          & makensis -DARG_WAILS_AMD64_BINARY="$PWD\bin\NethernetDesktop.exe" build/windows/nsis/project.nsi
+          if ($LASTEXITCODE -ne 0) { throw "NSIS installer build failed" }
+          if (!(Test-Path "bin/NethernetDesktop-installer.exe")) {
             throw "Expected NSIS installer was not created."
           }
