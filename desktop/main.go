@@ -33,7 +33,7 @@ func runWebUI(app *AppService) error {
 	}
 
 	// Bind only to IPv4 loopback and let the OS choose an unused port.
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	listener, err := listenLoopback()
 	if err != nil {
 		return fmt.Errorf("start loopback listener: %w", err)
 	}
@@ -93,6 +93,10 @@ func runWebUI(app *AppService) error {
 		_ = server.Close()
 		return nil
 	}
+}
+
+func listenLoopback() (net.Listener, error) {
+	return net.Listen("tcp4", "127.0.0.1:0")
 }
 
 func openBrowserURL(url string) error {
