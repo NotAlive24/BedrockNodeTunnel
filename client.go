@@ -312,9 +312,14 @@ func getActiveNodeList(customControl, customWeb string) []RegionNode {
 		if web == "" && control != "" {
 			web = resolveNodeInput(control).WebURL
 		}
+		validControl, controlErr := validateControlAddr(control)
+		validWeb, webErr := validateWebURL(web)
+		if controlErr != nil || webErr != nil {
+			return nil
+		}
 		return []RegionNode{{
-			Code: "CUSTOM", Name: "Selected Node (" + control + ")",
-			WebURL: strings.TrimRight(web, "/"), ControlAddr: control,
+			Code: "CUSTOM", Name: "Selected Node (" + validControl + ")",
+			WebURL: validWeb, ControlAddr: validControl,
 		}}
 	}
 
@@ -696,7 +701,9 @@ func buildLocalUDPCandidates(localUDPIP string, targetPort int) []candConn {
 
 func randomHex(nBytes int) string {
 	b := make([]byte, nBytes)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		return ""
+	}
 	return hex.EncodeToString(b)
 }
 
@@ -746,7 +753,15 @@ func obtainOrClaimToken(customControl, customWeb, flagToken string) (string, str
 	}
 
 	nodes := getActiveNodeList(customControl, customWeb)
+	if len(nodes) == 0 {
+		log.Fatalf("[Bedrock Node Tunnel] No trusted HTTPS claim dashboard is configured. For custom nodes, pass both -control host:port and -web https://your-dashboard.")
+		return "", ""
+	}
 	claimCode := strings.ToUpper(randomHex(3))
+	if claimCode == "" {
+		log.Fatal("[Bedrock Node Tunnel] Could not generate a secure claim code.")
+		return "", ""
+	}
 
 	fmt.Println("==========================================================================")
 	fmt.Println("  BEDROCK NODE TUNNEL — FIRST TIME SETUP (MULTI-REGION)")
@@ -765,12 +780,24 @@ func obtainOrClaimToken(customControl, customWeb, flagToken string) (string, str
 		openBrowser(firstLink)
 	}
 
-	client := &http.Client{Timeout: 4 * time.Second}
-
 	for {
 		for _, n := range nodes {
 			if n.WebURL == "" {
 				continue
+			}
+			baseURL, parseErr := url.Parse(n.WebURL)
+			if parseErr != nil {
+				continue
+			}
+			client := &http.Client{
+				Timeout: 4 * time.Second,
+				CheckRedirect: func(req *http.Request, via []*http.Request) error {
+					if len(via) >= 3 || req.URL.Scheme != baseURL.Scheme ||
+						!strings.EqualFold(req.URL.Host, baseURL.Host) {
+						return errors.New("claim poll redirected outside the configured dashboard origin")
+					}
+					return nil
+				},
 			}
 			pollUrl := fmt.Sprintf("%s/api/poll-claim?code=%s", strings.TrimRight(n.WebURL, "/"), url.QueryEscape(claimCode))
 			resp, err := client.Get(pollUrl)
