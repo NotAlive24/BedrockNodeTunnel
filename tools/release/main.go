@@ -36,7 +36,45 @@ const (
 )
 
 var (
-	versionRe    = regexp.MustCompile(`^[0-9][0-9A-Za-z.]*$`)
+	versionRe    = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?package main
+
+import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
+	"crypto/md5"
+	"crypto/sha256"
+	"embed"
+	"encoding/hex"
+	"flag"
+	"fmt"
+	"io"
+	"io/fs"
+	"log"
+	"os"
+	"os/exec"
+	"path"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+	"text/template"
+	"time"
+)
+
+//go:embed templates/*
+var templateFS embed.FS
+
+const (
+	pkgName           = "bedrocknode-tunnel"
+	binName           = "nethernet-client"
+	defaultMaintainer = "NotAlive24 <128290190+NotAlive24@users.noreply.github.com>"
+	defaultRepo       = "https://github.com/NotAlive24/BedrockNodeTunnel"
+	lintianOverride   = "bedrocknode-tunnel: statically-linked-binary [usr/bin/nethernet-client]\n"
+)
+
+var (
+	)
 	maintainerRe = regexp.MustCompile(`^[^<>]+ <[^<>@\s]+@[^<>\s]+>$`)
 )
 
