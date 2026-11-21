@@ -1,36 +1,47 @@
-# Nethernet Desktop Suite
+# Nethernet Desktop Control Suite
 
-A local browser-based control centre for the Bedrock Node Tunnel client. The launcher binds only to 127.0.0.1 on an available port and opens the UI in the default browser. The CLI remains a separate, independently usable program. The CLI remains a separate, independently usable program.
+Nethernet Desktop is a small Go launcher and local browser control panel for the Bedrock Node Tunnel client. It does not embed a browser engine.
+
+## Localhost-only design
+
+When started, the launcher:
+- Listens on an OS-selected free port bound specifically to IPv4 loopback `127.0.0.1`.
+- Opens the UI in the user's default browser.
+- Serves the UI and its JSON API from the same origin.
+- Rejects non-loopback peer addresses, unexpected Host headers, and foreign Origin headers.
+- Does not enable CORS and does not bind to LAN interfaces such as `0.0.0.0` or a machine's LAN IP.
+
+The terminal prints the exact local URL. Keep the launcher process open while using the UI. Press Ctrl+C in that terminal, or use **Stop local UI** in Settings, to close the local server. The local API is not intended to be a network service or to be exposed through a reverse proxy.
 
 ## Features
 
-- Start, stop and restart the existing tunnel engine as a managed process.
-- Save multiple connection profiles and switch between them.
-- Install or update the engine from this fork's latest GitHub release with SHA-256 verification.
-- Inspect engine version and path.
+- Start, stop and restart the tunnel engine as a managed foreground process.
+- Save, edit, switch and delete connection profiles.
+- Install/update the engine from this fork's latest GitHub release with SHA-256 verification.
+- Inspect engine version and executable path.
 - Run local TCP, relay TCP and service API diagnostics.
 - View a bounded live log buffer with token-like values redacted.
 - Linux systemd user service and Windows per-user Task Scheduler background mode.
-- User-scoped configuration; normal operation does not require administrator privileges.
+- Per-user configuration; normal operation does not require administrator privileges.
 
-## Development
+## Build and test
 
-Requirements: Go 1.26+, Wails CLI v3.0.0 for packaging helpers, and platform packaging tools. The running UI uses the system browser; it does not embed WebKit or require WebView2.
+Requirements: Go 1.26 or newer. For Windows installer packaging, NSIS is also required. A modern system browser is required at runtime.
 
-    go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-    cd desktop
-    go mod download
-    wails3 generate bindings
-    go test ./...
-    go run .
+```sh
+cd desktop
+go test ./...
+go run ./tools/generate-icon
+go build -trimpath -ldflags="-s -w" -o bin/NethernetDesktop .
+```
 
-The frontend communicates with the local Go process through a same-origin JSON API.
+The Linux DEB and Arch packages are built with [nfpm](https://nfpm.goreleaser.com/). The Windows per-user installer is built with NSIS. Neither package build requires Wails, WebView2 or WebKitGTK.
 
 ## Configuration
 
-Desktop settings and profiles are stored in the user's config directory under bedrocknode-tunnel/desktop.json. The tunnel engine's own token/config files remain managed by the existing client; this app does not read or print those secrets.
+Desktop settings and profiles are stored in the user's config directory under `bedrocknode-tunnel/desktop.json`. The tunnel engine's own token/config files remain managed by the existing client; this app does not read or print those secrets.
 
-Linux background mode writes a per-user systemd unit. Windows background mode uses a per-user Task Scheduler task. Closing the UI leaves a background-managed tunnel running; foreground-managed tunnels are stopped when the app exits.
+The engine updater installs into `bedrocknode-tunnel/bin/`. Linux background mode creates a per-user systemd unit; Windows background mode uses a per-user Task Scheduler task. Closing the browser does not stop the launcher process or a background-managed tunnel; stop the launcher separately with Ctrl+C or the Settings control.
 
 ## Diagnostics caveats
 
