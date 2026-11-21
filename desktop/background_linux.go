@@ -15,6 +15,8 @@ import (
 	"time"
 )
 
+var systemdRunDirectory = "/run/systemd/system"
+
 type backgroundConfig struct {
 	Binary string
 	Args   []string
@@ -86,7 +88,27 @@ func systemctl(args ...string) error {
 	return nil
 }
 
+func userSystemdAvailable() bool {
+	if _, err := os.Stat(systemdRunDirectory); err != nil {
+		return false
+	}
+	if _, err := exec.LookPath("systemctl"); err != nil {
+		return false
+	}
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(runtimeDir, "bus")); err != nil {
+		return false
+	}
+	return true
+}
+
 func backgroundStatus() (bool, error) {
+	if !userSystemdAvailable() {
+		return false, nil
+	}
 	systemctlPath, err := exec.LookPath("systemctl")
 	if errors.Is(err, exec.ErrNotFound) {
 		return false, nil
@@ -160,6 +182,5 @@ func removeBackground() error {
 }
 
 func backgroundSupported() bool {
-	_, err := exec.LookPath("systemctl")
-	return err == nil
+	return userSystemdAvailable()
 }
