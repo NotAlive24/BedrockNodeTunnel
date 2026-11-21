@@ -539,6 +539,12 @@ func (s *AppService) stopForegroundTunnel() error {
 func (s *AppService) StopTunnel() error {
 	active, err := backgroundStatus()
 	if err != nil {
+		s.mu.RLock()
+		foregroundRunning := s.cmd != nil
+		s.mu.RUnlock()
+		if foregroundRunning {
+			return s.stopForegroundTunnel()
+		}
 		return fmt.Errorf("could not check background tunnel status: %w", err)
 	}
 	if active {
@@ -572,6 +578,9 @@ func (s *AppService) RestartTunnel() error {
 }
 
 func (s *AppService) StartBackground() error {
+	if !backgroundSupported() {
+		return errors.New("background service management is not available on this system")
+	}
 	s.mu.RLock()
 	p, running := s.activeProfileLocked(), s.cmd != nil
 	s.mu.RUnlock()
