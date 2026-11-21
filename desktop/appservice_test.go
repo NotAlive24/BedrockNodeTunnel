@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestValidateProfile(t *testing.T) {
  valid := Profile{ID:"test",Name:"Home",Region:"AUTO",LocalTCP:"127.0.0.1:19132",LocalUDPPort:47334}
@@ -34,3 +38,21 @@ func TestCleanLogLineRedactsToken(t *testing.T) {
  if got=="" { t.Fatal("expected relevant log line") }
  if got=="[Tunnel Client] token=supersecret authenticated tunnel established" { t.Fatal("token was not redacted") }
 }
+
+func TestResolveEngineFindsUpdaterInstalledAsset(t *testing.T) {
+	root := t.TempDir()
+	enginePath := filepath.Join(root, "bin", engineAssetName())
+	if err := os.MkdirAll(filepath.Dir(enginePath), 0700); err != nil {
+		t.Fatalf("create engine directory: %v", err)
+	}
+	if err := os.WriteFile(enginePath, []byte("test engine placeholder"), 0600); err != nil {
+		t.Fatalf("create engine placeholder: %v", err)
+	}
+
+	service := &AppService{configDir: root}
+	got := service.resolveEngine()
+	if got != enginePath {
+		t.Fatalf("resolveEngine() = %q, want updater-installed engine %q", got, enginePath)
+	}
+}
+

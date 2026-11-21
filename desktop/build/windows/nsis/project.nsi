@@ -1,57 +1,49 @@
 Unicode true
+RequestExecutionLevel user
 
-!define WAILS_INSTALL_SCOPE "user"
-!define REQUEST_EXECUTION_LEVEL "user"
-!define PRODUCT_EXECUTABLE "NethernetDesktop.exe"
-!include "wails_tools.nsh"
+!define PRODUCT_NAME "Nethernet Desktop"
+!define PRODUCT_VERSION "1.0.0"
+!define PRODUCT_EXE "NethernetDesktop.exe"
+!ifndef ARG_DESKTOP_BINARY
+  !error "ARG_DESKTOP_BINARY must point to the built executable"
+!endif
 
 VIProductVersion "1.0.0.0"
-VIFileVersion "1.0.0.0"
 VIAddVersionKey "CompanyName" "NotAlive24"
 VIAddVersionKey "FileDescription" "Nethernet Desktop Installer"
-VIAddVersionKey "ProductVersion" "1.0.0"
-VIAddVersionKey "FileVersion" "1.0.0"
-VIAddVersionKey "LegalCopyright" "Copyright 2026 NotAlive24"
-VIAddVersionKey "ProductName" "Nethernet Desktop"
+VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
+VIAddVersionKey "ProductName" "${PRODUCT_NAME}"
 
-ManifestDPIAware true
 !include "MUI.nsh"
-!define MUI_ICON "..\\icon.ico"
-!define MUI_UNICON "..\\icon.ico"
-!define MUI_FINISHPAGE_NOAUTOCLOSE
-!define MUI_ABORTWARNING
-
-!insertmacro MUI_PAGE_WELCOME
-!insertmacro MUI_PAGE_DIRECTORY
-!insertmacro MUI_PAGE_INSTFILES
-!insertmacro MUI_PAGE_FINISH
-!insertmacro MUI_UNPAGE_INSTFILES
-!insertmacro MUI_LANGUAGE "English"
-
-Name "Nethernet Desktop"
+Name "${PRODUCT_NAME}"
 OutFile "..\\..\\..\\bin\\NethernetDesktop-installer.exe"
 InstallDir "$LOCALAPPDATA\\Programs\\Nethernet Desktop"
 ShowInstDetails show
-
-Function .onInit
-  !insertmacro wails.checkArchitecture
-FunctionEnd
+!define MUI_FINISHPAGE_RUN "$INSTDIR\\${PRODUCT_EXE}"
+!define MUI_FINISHPAGE_RUN_TEXT "Launch Nethernet Desktop"
+!insertmacro MUI_PAGE_WELCOME
+!insertmacro MUI_PAGE_INSTFILES
+!insertmacro MUI_PAGE_FINISH
+!insertmacro MUI_UNPAGE_CONFIRM
+!insertmacro MUI_UNPAGE_INSTFILES
+!insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
-  !insertmacro wails.setShellContext
-  !insertmacro wails.webview2runtime
-  SetOutPath $INSTDIR
-  !insertmacro wails.files
+  SetShellVarContext current
+  SetOutPath "$INSTDIR"
+  File /oname=${PRODUCT_EXE} "${ARG_DESKTOP_BINARY}"
+  WriteUninstaller "$INSTDIR\\Uninstall.exe"
   CreateDirectory "$SMPROGRAMS\\Nethernet Desktop"
-  CreateShortcut "$SMPROGRAMS\\Nethernet Desktop\\Nethernet Desktop.lnk" "$INSTDIR\\NethernetDesktop.exe"
-  CreateShortcut "$DESKTOP\\Nethernet Desktop.lnk" "$INSTDIR\\NethernetDesktop.exe"
-  !insertmacro wails.writeUninstaller
+  CreateShortcut "$SMPROGRAMS\\Nethernet Desktop\\Nethernet Desktop.lnk" "$INSTDIR\\${PRODUCT_EXE}"
+  CreateShortcut "$DESKTOP\\Nethernet Desktop.lnk" "$INSTDIR\\${PRODUCT_EXE}"
 SectionEnd
 
 Section "Uninstall"
-  !insertmacro wails.setShellContext
-  RMDir /r "$INSTDIR"
-  RMDir /r "$SMPROGRAMS\\Nethernet Desktop"
+  SetShellVarContext current
+  Delete "$SMPROGRAMS\\Nethernet Desktop\\Nethernet Desktop.lnk"
+  RMDir "$SMPROGRAMS\\Nethernet Desktop"
   Delete "$DESKTOP\\Nethernet Desktop.lnk"
-  !insertmacro wails.deleteUninstaller
+  Delete "$INSTDIR\\${PRODUCT_EXE}"
+  Delete "$INSTDIR\\Uninstall.exe"
+  RMDir "$INSTDIR"
 SectionEnd

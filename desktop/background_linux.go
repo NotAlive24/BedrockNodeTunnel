@@ -1,19 +1,155 @@
 //go:build linux
+
 package main
-import("encoding/json";"errors";"os";"os/exec";"path/filepath";"strconv";"strings")
-type backgroundConfig struct{Binary string; Args []string}
-func backgroundPaths()(string,string,error){d,e:=os.UserConfigDir();if e!=nil{return "","",e};return filepath.Join(d,"bedrocknode-tunnel","background.json"),filepath.Join(d,"systemd","user","bedrocknode-tunnel.service"),nil}
-func configureBackground(binary string,args []string)error{
- state,unit,e:=backgroundPaths();if e!=nil{return e};if e=os.MkdirAll(filepath.Dir(state),0700);e!=nil{return e};if e=os.MkdirAll(filepath.Dir(unit),0700);e!=nil{return e}
- b,e:=json.Marshal(backgroundConfig{binary,args});if e!=nil{return e};if e=os.WriteFile(state,b,0600);e!=nil{return e}
- parts:=[]string{strconv.Quote(binary)};for _,a:=range args{parts=append(parts,strconv.Quote(a))}
- body:="[Unit]\nDescription=Nethernet Bedrock Node Tunnel\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nExecStart="+strings.Join(parts," ")+"\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
- tmp:=unit+".tmp";if e=os.WriteFile(tmp,[]byte(body),0600);e!=nil{return e};return os.Rename(tmp,unit)
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type backgroundConfig struct {
+	Binary string
+	Args   []string
 }
-func systemctl(args ...string)error{c:=exec.Command("systemctl",append([]string{"--user"},args...)...);b,e:=c.CombinedOutput();if e!=nil{return errors.New(strings.TrimSpace(string(b))+": "+e.Error())};return nil}
-func backgroundStatus()(bool,error){c:=exec.Command("systemctl","--user","is-active","--quiet","bedrocknode-tunnel.service");return c.Run()==nil,nil}
-func startBackground()error{if e:=systemctl("daemon-reload");e!=nil{return e};return systemctl("enable","--now","bedrocknode-tunnel.service")}
-func stopBackground()error{return systemctl("stop","bedrocknode-tunnel.service")}
-func restartBackground()error{return systemctl("restart","bedrocknode-tunnel.service")}
-func removeBackground()error{_ = systemctl("disable","--now","bedrocknode-tunnel.service");_,u,e:=backgroundPaths();if e!=nil{return e};_ = os.Remove(u);return systemctl("daemon-reload")}
-func backgroundSupported()bool{return true}
+
+func backgroundPaths() (string, string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", "", err
+	}
+	return filepath.Join(dir, "bedrocknode-tunnel", "background.json"),
+		filepath.Join(dir, "systemd", "user", "bedrocknode-tunnel.service"), nil
+}
+
+func configureBackground(binary string, args []string) error {
+	statePath, unitPath, err := backgroundPaths()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(statePath), 0700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(unitPath), 0700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(backgroundConfig{Binary: binary, Args: args})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(statePath, data, 0600); err != nil {
+		return err
+	}
+
+	parts := []string{strconv.Quote(binary)}
+	for _, arg := range args {
+		parts = append(parts, strconv.Quote(arg))
+	}
+	unit := "[Unit]\n" +
+		"Description=Nethernet Bedrock Node Tunnel\n" +
+		"After=network-online.target\n" +
+		"Wants=network-online.target\n\n" +
+		"[Service]\n" +
+		"Type=simple\n" +
+		"ExecStart=" + strings.Join(parts, " ") + "\n" +
+		"Restart=on-failure\n" +
+		"RestartSec=5\n\n" +
+		"[Install]\n" +
+		"WantedBy=default.target\n"
+
+	tmpPath := unitPath + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(unit), 0600); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, unitPath)
+}
+
+func systemctl(args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "systemctl", append([]string{"--user"}, args...)...)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return errors.New("systemctl timed out")
+	}
+	if err != nil {
+		return errors.New(strings.TrimSpace(string(output)) + ": " + err.Error())
+	}
+	return nil
+}
+
+func backgroundStatus() (bool, error) {
+	systemctlPath, err := exec.LookPath("systemctl")
+	if errors.Is(err, exec.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, systemctlPath, "--user", "is-active", "bedrocknode-tunnel.service")
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return false, errors.New("systemctl status check timed out")
+	}
+	if err == nil {
+		switch strings.TrimSpace(string(output)) {
+		case "active":
+			return true, nil
+		case "inactive", "failed":
+			return false, nil
+		default:
+			return false, fmt.Errorf("unexpected systemd service state: %q", strings.TrimSpace(string(output)))
+		}
+	}
+
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		// systemctl returns 3 for inactive and 4 for an unknown unit.
+		if exitErr.ExitCode() == 3 || exitErr.ExitCode() == 4 {
+			return false, nil
+		}
+		return false, fmt.Errorf("systemctl status check failed: %s", strings.TrimSpace(string(output)))
+	}
+	return false, err
+}
+
+func startBackground() error {
+	if err := systemctl("daemon-reload"); err != nil {
+		return err
+	}
+	return systemctl("enable", "--now", "bedrocknode-tunnel.service")
+}
+
+func stopBackground() error {
+	return systemctl("stop", "bedrocknode-tunnel.service")
+}
+
+func restartBackground() error {
+	return systemctl("restart", "bedrocknode-tunnel.service")
+}
+
+func removeBackground() error {
+	_ = systemctl("disable", "--now", "bedrocknode-tunnel.service")
+	_, unitPath, err := backgroundPaths()
+	if err != nil {
+		return err
+	}
+	_ = os.Remove(unitPath)
+	return systemctl("daemon-reload")
+}
+
+func backgroundSupported() bool {
+	_, err := exec.LookPath("systemctl")
+	return err == nil
+}
