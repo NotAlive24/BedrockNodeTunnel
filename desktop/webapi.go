@@ -155,6 +155,26 @@ func newWebHandler(app *AppService, expectedHost string, frontend fs.FS, shutdow
 		app.ClearLogs()
 		writeAPIResponse(w, http.StatusOK, map[string]bool{"cleared": true})
 	}))
+	mux.HandleFunc("/api/uninstall", api.method(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			PurgeData bool `json:"purgeData"`
+		}
+		if err := decodeAPIJSON(w, r, &input); err != nil {
+			writeAPIError(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := app.UninstallApplication(input.PurgeData); err != nil {
+			writeAPIError(w, http.StatusConflict, err)
+			return
+		}
+		writeAPIResponse(w, http.StatusAccepted, map[string]bool{"uninstalling": true})
+		if api.shutdown != nil {
+			go func() {
+				time.Sleep(250 * time.Millisecond)
+				api.shutdown()
+			}()
+		}
+	}))
 	mux.HandleFunc("/api/shutdown", api.method(http.MethodPost, func(w http.ResponseWriter, r *http.Request) {
 		writeAPIResponse(w, http.StatusAccepted, map[string]bool{"shuttingDown": true})
 		if api.shutdown != nil {
