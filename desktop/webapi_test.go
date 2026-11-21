@@ -231,6 +231,47 @@ func TestWebHandlerRejectsMalformedJSONAndUnknownFields(t *testing.T) {
 	}
 }
 
+func TestWebHandlerSavesThemeThroughSettingsAPI(t *testing.T) {
+	service := testAppService(t)
+	handler := newWebHandler(service, "127.0.0.1:34567", fstest.MapFS{
+		"index.html": &fstest.MapFile{Data: []byte("<title>Nethernet</title>")},
+	}, nil)
+	body := `{"settings":{"enginePath":"","theme":"orange"}}`
+	request := localRequest(http.MethodPost, "/api/settings/save")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", "http://127.0.0.1:34567")
+	request.Body = io.NopCloser(strings.NewReader(body))
+	request.ContentLength = int64(len(body))
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("save settings status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := service.GetSettings().Theme; got != "orange" {
+		t.Fatalf("saved theme = %q, want orange", got)
+	}
+}
+
+func TestWebHandlerRejectsUninstallWithoutStrictJSONBody(t *testing.T) {
+	handler := testWebHandler(t, nil)
+	tests := []string{
+		`{"unexpected":true}`,
+		`{"purgeData":"yes"}`,
+		`{"purgeData":true} {"extra":true}`,
+	}
+	for _, body := range tests {
+		request := localRequest(http.MethodPost, "/api/uninstall")
+		request.Header.Set("Content-Type", "application/json")
+		request.Body = io.NopCloser(strings.NewReader(body))
+		request.ContentLength = int64(len(body))
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("body %q status = %d, want %d", body, recorder.Code, http.StatusBadRequest)
+		}
+	}
+}
+
 func TestWebHandlerShutdownCallback(t *testing.T) {
 	called := make(chan struct{}, 1)
 	handler := testWebHandler(t, func() { called <- struct{}{} })
