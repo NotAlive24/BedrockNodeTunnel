@@ -55,7 +55,7 @@ func runWebUI(app *AppService) error {
 		Handler:           newWebHandler(app, address, assets, shutdown),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      2 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 
