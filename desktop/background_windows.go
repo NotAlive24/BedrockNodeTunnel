@@ -161,7 +161,15 @@ func restartBackground() error {
 }
 
 func removeBackground() error {
-	_ = stopBackground()
+	if err := stopBackground(); err != nil {
+		active, statusErr := backgroundStatus()
+		if statusErr != nil {
+			return fmt.Errorf("could not verify scheduled-task state after stop failed: %w", statusErr)
+		}
+		if active {
+			return fmt.Errorf("could not stop active background task: %w", err)
+		}
+	}
 	if err := task("/Delete", "/TN", taskName, "/F"); err != nil {
 		lower := strings.ToLower(err.Error())
 		if !strings.Contains(lower, "cannot find the file specified") &&
