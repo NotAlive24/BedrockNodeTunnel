@@ -235,6 +235,19 @@ func (s *AppService) GetSettings() AppSettings {
 }
 
 func (s *AppService) SaveSettings(settings AppSettings) error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	s.mu.RLock()
+	running := s.cmd != nil
+	s.mu.RUnlock()
+	background, statusErr := backgroundStatus()
+	if statusErr != nil {
+		return fmt.Errorf("could not check background tunnel status: %w", statusErr)
+	}
+	if running || background {
+		return errors.New("stop the tunnel before changing the engine path")
+	}
 	if settings.EnginePath != "" {
 		if _, err := inspectEngine(settings.EnginePath); err != nil {
 			return err
@@ -387,8 +400,8 @@ func (s *AppService) inspectResolvedEngine() (EngineInfo, error) {
 }
 
 func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
-	s.updateMu.Lock()
-	defer s.updateMu.Unlock()
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 
 	s.mu.RLock()
 	running := s.cmd != nil
@@ -608,6 +621,9 @@ func checksumForAsset(manifest, asset string) string {
 }
 
 func (s *AppService) StartTunnel() error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
 	s.mu.Lock()
 	if s.cmd != nil { s.mu.Unlock(); return errors.New("tunnel process is already running") }
 	profile := s.activeProfileLocked()
@@ -785,6 +801,9 @@ func (s *AppService) RestartTunnel() error {
 }
 
 func (s *AppService) StartBackground() error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
 	if !backgroundSupported() {
 		return errors.New("background service management is not available on this system")
 	}
