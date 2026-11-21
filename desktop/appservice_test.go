@@ -3,6 +3,8 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"os/exec"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -72,5 +74,78 @@ func TestCleanLogLineNormalizesMojibakeAndRedactsClaimCodes(t *testing.T) {
 	}
 	if !strings.Contains(got, "claim=[redacted]") {
 		t.Fatalf("redacted claim marker missing: %q", got)
+	}
+}
+
+func TestLoadConfigPreservesCorruptOriginalAndWritesPrivateDefaults(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "desktop.json")
+	corrupt := []byte("{ not valid json")
+	if err := os.WriteFile(configPath, corrupt, 0644); err != nil {
+		t.Fatalf("write corrupt config: %v", err)
+	}
+
+	service := &AppService{configDir: root, configPath: configPath}
+	service.loadConfig()
+
+	backup, err := os.ReadFile(configPath + ".corrupt")
+	if err != nil {
+		t.Fatalf("read corrupt config backup: %v", err)
+	}
+	if string(backup) != string(corrupt) {
+		t.Fatalf("corrupt backup = %q, want %q", backup, corrupt)
+	}
+	if len(service.GetProfiles()) != 1 {
+		t.Fatalf("default profile count = %d, want 1", len(service.GetProfiles()))
+	}
+	if service.lastError == "" {
+		t.Fatal("expected a warning about the preserved invalid config")
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(configPath)
+		if err != nil {
+			t.Fatalf("stat recovered config: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0600 {
+			t.Fatalf("config permissions = %o, want 600", got)
+		}
+	}
+}
+
+func TestActiveProfileCannotBeEditedOrDeletedWhileTunnelRuns(t *testing.T) {
+	root := t.TempDir()
+	service := &AppService{
+		configDir: root,
+		configPath: filepath.Join(root, "desktop.json"),
+		config: appConfig{
+			SchemaVersion: 1,
+			ActiveProfile: "default",
+			Profiles: []Profile{
+				defaultProfile(),
+				{ID: "other", Name: "Other", Region: "AUTO", LocalTCP: "127.0.0.1:19133", LocalUDPPort: 47335},
+			},
+		},
+		cmd: &exec.Cmd{},
+	}
+	updated := defaultProfile()
+	updated.Name = "Changed while running"
+	if _, err := service.SaveProfile(updated); err == nil {
+		t.Fatal("editing active profile while running should fail")
+	}
+	if _, err := service.DeleteProfile("default"); err == nil {
+		t.Fatal("deleting active profile while running should fail")
+	}
+
+	// New, inactive profiles may still be prepared while an existing tunnel runs.
+	if _, err := service.SaveProfile(Profile{Name: "Next", Region: "AUTO", LocalTCP: "127.0.0.1:19134", LocalUDPPort: 47336}); err != nil {
+		t.Fatalf("saving a new inactive profile while running: %v", err)
+	}
+
+	service.cmd = nil
+	if _, err := service.DeleteProfile("default"); err != nil {
+		t.Fatalf("deleting active profile while stopped: %v", err)
+	}
+	if got := service.config.ActiveProfile; got != "other" {
+		t.Fatalf("active profile after delete = %q, want other", got)
 	}
 }
