@@ -484,14 +484,29 @@ func (s *AppService) captureOutput(reader io.Reader, finished chan<- struct{}) {
 
 func cleanLogLine(line string) string {
 	line = ansiPattern.ReplaceAllString(line, "")
-	line = strings.TrimSpace(secretPattern.ReplaceAllString(strings.ReplaceAll(line, "", ""), "$1[redacted]"))
-	if line == "" { return "" }
+	line = strings.ReplaceAll(line, "\r", "")
+	line = mojibakeReplacer.Replace(line)
+	line = secretPattern.ReplaceAllString(line, "$1[redacted]")
+	line = claimPattern.ReplaceAllString(line, "$1[redacted]")
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
 	lower := strings.ToLower(line)
 	relevant := []string{"[tunnel client]", "[bedrock node tunnel]", "authenticated tunnel", "claim", "reconnect", "disconnected", "error", "warning", "fast-lane", "already running"}
 	keep := false
-	for _, marker := range relevant { if strings.Contains(lower, marker) { keep = true; break } }
-	if !keep { return "" }
-	if len(line) > 600 { line = line[:600] + "…" }
+	for _, marker := range relevant {
+		if strings.Contains(lower, marker) {
+			keep = true
+			break
+		}
+	}
+	if !keep {
+		return ""
+	}
+	if len(line) > 600 {
+		line = line[:600] + "…"
+	}
 	return line
 }
 
