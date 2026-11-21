@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -264,7 +265,12 @@ func inspectEngine(path string) (EngineInfo, error) {
 	info, err := os.Stat(absolute)
 	if err != nil { return EngineInfo{}, fmt.Errorf("engine binary not found: %w", err) }
 	if info.IsDir() { return EngineInfo{}, errors.New("engine path points to a directory") }
-	out, err := exec.Command(absolute, "-version").CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, absolute, "-version").CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return EngineInfo{}, errors.New("engine version check timed out")
+	}
 	if err != nil { return EngineInfo{}, fmt.Errorf("could not run engine -version: %s", strings.TrimSpace(string(out))) }
 	version := strings.TrimSpace(string(out))
 	if version == "" || len(version) > 80 { return EngineInfo{}, errors.New("engine returned an invalid version string") }
