@@ -25,6 +25,9 @@ jobs:
       - name: Validate Linux installer syntax
         run: bash -n install.sh
 
+      - name: Validate desktop UI JavaScript
+        run: node --check desktop/frontend/app.js
+
       - name: Run tests
         run: go test ./...
 
