@@ -13,7 +13,7 @@ build() {
   cd "$pkgname-$pkgver"
   export CGO_ENABLED=0
   go build -trimpath -buildmode=pie -mod=vendor -modcacherw \
-    -ldflags "-s -w -X main.version=$pkgver" -o nethernet-client .
+    -ldflags "-s -w -X main.version=v$pkgver" -o nethernet-client .
 }
 
 package() {
