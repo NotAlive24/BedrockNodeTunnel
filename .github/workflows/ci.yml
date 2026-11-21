@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out source
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v7.1.0
         with:
           go-version-file: go.mod
           cache: true
@@ -51,7 +51,7 @@ jobs:
           done
 
       - name: Upload cross-platform binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: nethernet-client-cross-platform
           path: /tmp/bnt-cross-build/*
