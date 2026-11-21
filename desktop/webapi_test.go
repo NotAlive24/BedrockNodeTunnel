@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -55,7 +56,7 @@ func testAppService(t *testing.T) *AppService {
 	root := t.TempDir()
 	return &AppService{
 		configDir:  root,
-		configPath: root + "/desktop.json",
+		configPath: filepath.Join(root, "desktop.json"),
 		config: appConfig{
 			SchemaVersion: 1,
 			ActiveProfile: "default",
@@ -225,5 +226,26 @@ func TestWebHandlerShutdownCallback(t *testing.T) {
 	case <-called:
 	case <-time.After(time.Second):
 		t.Fatal("shutdown callback was not called")
+	}
+}
+
+func TestWebHandlerReturnsEmptyLogArray(t *testing.T) {
+	handler := testWebHandler(t, nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, localRequest(http.MethodGet, "/api/logs"))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /api/logs status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	var response struct {
+		Data []LogEntry `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode logs response: %v", err)
+	}
+	if response.Data == nil {
+		t.Fatal("empty logs must serialize as an array, not null")
+	}
+	if len(response.Data) != 0 {
+		t.Fatalf("log count = %d, want zero", len(response.Data))
 	}
 }
