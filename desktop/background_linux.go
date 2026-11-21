@@ -44,4 +44,7 @@ func startBackground()error{if e:=systemctl("daemon-reload");e!=nil{return e};re
 func stopBackground()error{return systemctl("stop","bedrocknode-tunnel.service")}
 func restartBackground()error{return systemctl("restart","bedrocknode-tunnel.service")}
 func removeBackground()error{_ = systemctl("disable","--now","bedrocknode-tunnel.service");_,u,e:=backgroundPaths();if e!=nil{return e};_ = os.Remove(u);return systemctl("daemon-reload")}
-func backgroundSupported()bool{return true}
+func backgroundSupported() bool {
+	_, err := exec.LookPath("systemctl")
+	return err == nil
+}
