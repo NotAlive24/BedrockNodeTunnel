@@ -211,8 +211,14 @@ func (s *AppService) SetActiveProfile(id string) error {
 }
 
 func (s *AppService) DeleteProfile(id string) ([]Profile, error) {
-	s.mu.Lock(); defer s.mu.Unlock()
-	if len(s.config.Profiles) <= 1 { return nil, errors.New("at least one connection profile must remain") }
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id == s.config.ActiveProfile {
+		return nil, errors.New("switch to another profile before deleting the active profile")
+	}
+	if len(s.config.Profiles) <= 1 {
+		return nil, errors.New("at least one connection profile must remain")
+	}
 	index := -1
 	for i, p := range s.config.Profiles { if p.ID == id { index = i; break } }
 	if index < 0 { return nil, errors.New("profile not found") }
@@ -229,11 +235,22 @@ func (s *AppService) GetSettings() AppSettings {
 
 func (s *AppService) SaveSettings(settings AppSettings) error {
 	if settings.EnginePath != "" {
-		if _, err := inspectEngine(settings.EnginePath); err != nil { return err }
+		if _, err := inspectEngine(settings.EnginePath); err != nil {
+			return err
+		}
 	}
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previousPath := s.config.Settings.EnginePath
 	s.config.Settings = settings
-	return s.saveConfigLocked()
+	if err := s.saveConfigLocked(); err != nil {
+		s.config.Settings.EnginePath = previousPath
+		return err
+	}
+	if previousPath != settings.EnginePath {
+		s.engineCacheValid = false
+	}
+	return nil
 }
 
 func validateProfile(p Profile) error {
@@ -333,6 +350,39 @@ func inspectEngine(path string) (EngineInfo, error) {
 	version := strings.TrimSpace(string(out))
 	if version == "" || len(version) > 80 { return EngineInfo{}, errors.New("engine returned an invalid version string") }
 	return EngineInfo{Path:absolute, Version:version}, nil
+}
+
+func (s *AppService) inspectResolvedEngine() (EngineInfo, error) {
+	path := s.resolveEngine()
+	if path == "" {
+		return EngineInfo{}, errors.New("tunnel engine is not installed")
+	}
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return EngineInfo{}, err
+	}
+
+	s.mu.RLock()
+	if s.engineCacheValid &&
+		s.engineCachePath == path &&
+		s.engineCacheSize == fileInfo.Size() &&
+		s.engineCacheModTime.Equal(fileInfo.ModTime()) {
+		cached, cachedErr := s.engineCache, s.engineCacheErr
+		s.mu.RUnlock()
+		return cached, cachedErr
+	}
+	s.mu.RUnlock()
+
+	engine, inspectErr := inspectEngine(path)
+	s.mu.Lock()
+	s.engineCachePath = path
+	s.engineCacheSize = fileInfo.Size()
+	s.engineCacheModTime = fileInfo.ModTime()
+	s.engineCache = engine
+	s.engineCacheErr = inspectErr
+	s.engineCacheValid = true
+	s.mu.Unlock()
+	return engine, inspectErr
 }
 
 func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
@@ -772,8 +822,8 @@ func (s *AppService) GetSnapshot() AppSnapshot {
 	}
 	engine := s.resolveEngine()
 	engineVersion, engineFound := "", false
-	if engine != "" {
-		if info, err := inspectEngine(engine); err == nil { engineFound, engineVersion = true, info.Version }
+	if info, err := s.inspectResolvedEngine(); err == nil {
+		engineFound, engineVersion = true, info.Version
 	}
 	running, mode, uptime, startedText := cmd != nil, "Stopped", "—", ""
 	if background { mode, connection = "Background service", "Background service active" } else if running {
