@@ -1062,6 +1062,32 @@ func controlAddress(region string) string {
 	return controls[strings.ToUpper(strings.TrimSpace(region))]
 }
 
+func (s *AppService) UninstallApplication(purgeData bool) error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	background, err := backgroundStatus()
+	if err != nil {
+		return fmt.Errorf("could not verify background tunnel state: %w", err)
+	}
+	if backgroundSupported() || background {
+		if err := removeBackground(); err != nil {
+			return fmt.Errorf("could not remove background tunnel service: %w", err)
+		}
+		s.addLog("INFO", "Background tunnel service removed for application uninstall")
+	}
+
+	if err := s.stopForegroundTunnel(); err != nil {
+		return fmt.Errorf("could not stop foreground tunnel: %w", err)
+	}
+
+	if err := launchPlatformUninstaller(os.Getpid(), s.configDir, purgeData); err != nil {
+		return err
+	}
+	s.addLog("INFO", "Application uninstaller started")
+	return nil
+}
+
 func (s *AppService) ServiceShutdown() error {
 	active, err := backgroundStatus()
 	if err == nil && active {
