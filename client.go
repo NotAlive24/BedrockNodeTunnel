@@ -528,6 +528,7 @@ func saveToken(tok string) string {
 			if err := os.Chmod(p, 0600); err == nil {
 				return p
 			}
+			_ = os.Remove(p)
 		}
 	}
 	return ""
@@ -564,6 +565,7 @@ func saveNodeAddr(ctrlAddr string) string {
 			if err := os.Chmod(p, 0600); err == nil {
 				return p
 			}
+			_ = os.Remove(p)
 		}
 	}
 	return ""
