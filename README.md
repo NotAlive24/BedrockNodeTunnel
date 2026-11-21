@@ -8,7 +8,7 @@
 
 ## What's new in v2.0.0
 
-- **Nethernet Desktop Control Suite:** a Go desktop launcher with a browser-based control panel, profiles, engine installation/update, diagnostics, logs and background-service controls.
+- **Nethernet Desktop Control Suite:** a Go desktop launcher with a browser-based control panel, profiles, engine installation/update, diagnostics, logs and background-service controls. Green is the default accent theme, with five alternative colors that persist across launches; Settings also includes a native uninstall action with optional data removal.
 - **Localhost-only UI:** the desktop process binds only to `127.0.0.1` on an automatically selected port. It does not expose the control API to the LAN and uses same-origin requests with a restrictive Content Security Policy.
 - **Windows and Linux desktop packaging:** Windows per-user NSIS installer, Debian/Ubuntu package, Arch Linux package, and portable Linux/Windows bundles.
 - **Engine update safety:** the desktop updater verifies SHA-256 and the engine's reported version before replacing the working executable, and restores the previous engine if activation or configuration saving fails.
