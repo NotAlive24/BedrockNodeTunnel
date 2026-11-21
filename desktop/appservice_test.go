@@ -42,6 +42,16 @@ func TestCleanLogLineRedactsToken(t *testing.T) {
  if got=="[Tunnel Client] token=supersecret authenticated tunnel established" { t.Fatal("token was not redacted") }
 }
 
+func TestCleanLogLineRedactsQuotedTokensAndAuthorizationHeaders(t *testing.T) {
+	input := "[Tunnel Client] token=token-secret \"token\":\"json-secret\" Authorization: Bearer header-secret authenticated tunnel established"
+	got := cleanLogLine(input)
+	for _, secret := range []string{"token-secret", "json-secret", "header-secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("sensitive value %q was not redacted: %q", secret, got)
+		}
+	}
+}
+
 func TestResolveEngineFindsUpdaterInstalledAsset(t *testing.T) {
 	root := t.TempDir()
 	enginePath := filepath.Join(root, "bin", engineAssetName())
