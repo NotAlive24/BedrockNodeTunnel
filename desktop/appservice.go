@@ -228,9 +228,32 @@ func (s *AppService) GetProfiles() []Profile {
 }
 
 func (s *AppService) SaveProfile(profile Profile) ([]Profile, error) {
-	if err := validateProfile(profile); err != nil { return nil, err }
-	s.mu.Lock(); defer s.mu.Unlock()
-	if profile.ID == "" { profile.ID = fmt.Sprintf("profile-%d", time.Now().UnixNano()) }
+	if err := validateProfile(profile); err != nil {
+		return nil, err
+	}
+
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	s.mu.RLock()
+	activeEdit := profile.ID != "" && profile.ID == s.config.ActiveProfile
+	running := s.cmd != nil
+	s.mu.RUnlock()
+	if activeEdit {
+		background, err := backgroundStatus()
+		if err != nil {
+			return nil, fmt.Errorf("could not check background tunnel status: %w", err)
+		}
+		if running || background {
+			return nil, errors.New("stop the tunnel before editing the active profile")
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if profile.ID == "" {
+		profile.ID = fmt.Sprintf("profile-%d", time.Now().UnixNano())
+	}
 	found := false
 	for i := range s.config.Profiles {
 		if s.config.Profiles[i].ID == profile.ID {
@@ -238,13 +261,22 @@ func (s *AppService) SaveProfile(profile Profile) ([]Profile, error) {
 			break
 		}
 	}
-	if !found { s.config.Profiles = append(s.config.Profiles, profile) }
-	if s.config.ActiveProfile == "" { s.config.ActiveProfile = profile.ID }
-	if err := s.saveConfigLocked(); err != nil { return nil, err }
+	if !found {
+		s.config.Profiles = append(s.config.Profiles, profile)
+	}
+	if s.config.ActiveProfile == "" {
+		s.config.ActiveProfile = profile.ID
+	}
+	if err := s.saveConfigLocked(); err != nil {
+		return nil, err
+	}
 	return append([]Profile(nil), s.config.Profiles...), nil
 }
 
 func (s *AppService) SetActiveProfile(id string) error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
 	active, err := backgroundStatus()
 	if err != nil {
 		return fmt.Errorf("could not check background tunnel status: %w", err)
@@ -265,20 +297,45 @@ func (s *AppService) SetActiveProfile(id string) error {
 }
 
 func (s *AppService) DeleteProfile(id string) ([]Profile, error) {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+
+	s.mu.RLock()
+	activeDelete := id == s.config.ActiveProfile
+	running := s.cmd != nil
+	s.mu.RUnlock()
+	if activeDelete {
+		background, err := backgroundStatus()
+		if err != nil {
+			return nil, fmt.Errorf("could not check background tunnel status: %w", err)
+		}
+		if running || background {
+			return nil, errors.New("stop the tunnel before deleting the active profile")
+		}
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if id == s.config.ActiveProfile {
-		return nil, errors.New("switch to another profile before deleting the active profile")
-	}
 	if len(s.config.Profiles) <= 1 {
 		return nil, errors.New("at least one connection profile must remain")
 	}
 	index := -1
-	for i, p := range s.config.Profiles { if p.ID == id { index = i; break } }
-	if index < 0 { return nil, errors.New("profile not found") }
+	for i, profile := range s.config.Profiles {
+		if profile.ID == id {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		return nil, errors.New("profile not found")
+	}
 	s.config.Profiles = append(s.config.Profiles[:index], s.config.Profiles[index+1:]...)
-	if s.config.ActiveProfile == id { s.config.ActiveProfile = s.config.Profiles[0].ID }
-	if err := s.saveConfigLocked(); err != nil { return nil, err }
+	if s.config.ActiveProfile == id {
+		s.config.ActiveProfile = s.config.Profiles[0].ID
+	}
+	if err := s.saveConfigLocked(); err != nil {
+		return nil, err
+	}
 	return append([]Profile(nil), s.config.Profiles...), nil
 }
 
