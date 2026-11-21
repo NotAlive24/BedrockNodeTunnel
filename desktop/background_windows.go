@@ -1,26 +1,189 @@
 //go:build windows
+
 package main
-import("context";"encoding/json";"errors";"os";"os/exec";"path/filepath";"strings";"time")
-const taskName="NethernetBedrockNodeTunnel"
-type backgroundConfig struct{Binary string;Args []string}
-func backgroundPath()(string,error){d,e:=os.UserConfigDir();if e!=nil{return "",e};return filepath.Join(d,"bedrocknode-tunnel","background.json"),nil}
-func configureBackground(binary string,args []string)error{p,e:=backgroundPath();if e!=nil{return e};if e=os.MkdirAll(filepath.Dir(p),0700);e!=nil{return e};b,e:=json.Marshal(backgroundConfig{binary,args});if e!=nil{return e};if e=os.WriteFile(p,b,0600);e!=nil{return e};if exec.Command("schtasks.exe","/Query","/TN",taskName).Run()==nil{c,e:=taskCommand();if e!=nil{return e};return task("/Create","/SC","ONLOGON","/TN",taskName,"/TR",c,"/F")};return nil}
-func taskCommand()(string,error){p,e:=backgroundPath();if e!=nil{return "",e};b,e:=os.ReadFile(p);if e!=nil{return "",e};var c backgroundConfig;if e=json.Unmarshal(b,&c);e!=nil{return "",e};q:=func(s string)string{if !strings.ContainsAny(s," \t\""){return s};return "\""+strings.ReplaceAll(s,"\"","\\\"")+"\""};a:=[]string{q(c.Binary)};for _,v:=range c.Args{a=append(a,q(v))};return strings.Join(a," "),nil}
-func task(args ...string)error{b,e:=exec.Command("schtasks.exe",args...).CombinedOutput();if e!=nil{return errors.New(strings.TrimSpace(string(b))+": "+e.Error())};return nil}
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+const taskName = "NethernetBedrockNodeTunnel"
+
+type backgroundConfig struct {
+	Binary string
+	Args   []string
+}
+
+func backgroundPath() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "bedrocknode-tunnel", "background.json"), nil
+}
+
+func configureBackground(binary string, args []string) error {
+	configPath, err := backgroundPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0700); err != nil {
+		return err
+	}
+	data, err := json.Marshal(backgroundConfig{Binary: binary, Args: args})
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		return err
+	}
+
+	commandLine, err := taskCommand()
+	if err != nil {
+		return err
+	}
+	if err := task("/Create", "/SC", "ONLOGON", "/TN", taskName, "/TR", commandLine, "/F"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func taskCommand() (string, error) {
+	configPath, err := backgroundPath()
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return "", err
+	}
+	var config backgroundConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		return "", err
+	}
+	args := make([]string, 0, len(config.Args)+1)
+	args = append(args, quoteWindowsArg(config.Binary))
+	for _, arg := range config.Args {
+		args = append(args, quoteWindowsArg(arg))
+	}
+	return strings.Join(args, " "), nil
+}
+
+// quoteWindowsArg follows the CommandLineToArgvW quoting rules.
+func quoteWindowsArg(arg string) string {
+	if arg != "" && !strings.ContainsAny(arg, " \t\n\v\"") {
+		return arg
+	}
+	var b strings.Builder
+	b.WriteByte('"')
+	backslashes := 0
+	for _, r := range arg {
+		switch r {
+		case '\\':
+			backslashes++
+		case '"':
+			b.WriteString(strings.Repeat("\\", backslashes*2+1))
+			b.WriteRune(r)
+			backslashes = 0
+		default:
+			b.WriteString(strings.Repeat("\\", backslashes))
+			b.WriteRune(r)
+			backslashes = 0
+		}
+	}
+	b.WriteString(strings.Repeat("\\", backslashes*2))
+	b.WriteByte('"')
+	return b.String()
+}
+
+func task(args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "schtasks.exe", args...)
+	output, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return errors.New("Windows Task Scheduler command timed out")
+	}
+	if err != nil {
+		return fmt.Errorf("Task Scheduler command failed: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
 func backgroundStatus() (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	b, err := exec.CommandContext(ctx, "schtasks.exe", "/Query", "/TN", taskName, "/FO", "LIST", "/V").CombinedOutput()
+	cmd := exec.CommandContext(ctx, "schtasks.exe", "/Query", "/TN", taskName, "/FO", "LIST", "/V")
+	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return false, errors.New("scheduled-task status check timed out")
 	}
 	if err != nil {
+		lower := strings.ToLower(string(output))
+		if strings.Contains(lower, "cannot find the file specified") ||
+			strings.Contains(lower, "cannot find the task") {
+			return false, nil
+		}
+		return false, fmt.Errorf("could not query background task: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+
+	lower := strings.ToLower(string(output))
+	if strings.Contains(lower, "running") {
+		return true, nil
+	}
+	if strings.Contains(lower, "ready") || strings.Contains(lower, "disabled") {
 		return false, nil
 	}
-	return strings.Contains(strings.ToLower(string(b)), "running"), nil
+	return false, fmt.Errorf("could not determine background task state from Task Scheduler response")
 }
-func startBackground()error{c,e:=taskCommand();if e!=nil{return e};if e=task("/Create","/SC","ONLOGON","/TN",taskName,"/TR",c,"/F");e!=nil{return e};return task("/Run","/TN",taskName)}
-func stopBackground()error{return task("/End","/TN",taskName)}
-func restartBackground()error{_ = stopBackground();return task("/Run","/TN",taskName)}
-func removeBackground()error{_ = stopBackground();if e:=task("/Delete","/TN",taskName,"/F");e!=nil{return e};p,e:=backgroundPath();if e==nil{_ = os.Remove(p)};return nil}
-func backgroundSupported()bool{return true}
+
+func startBackground() error {
+	commandLine, err := taskCommand()
+	if err != nil {
+		return err
+	}
+	if err := task("/Create", "/SC", "ONLOGON", "/TN", taskName, "/TR", commandLine, "/F"); err != nil {
+		return err
+	}
+	return task("/Run", "/TN", taskName)
+}
+
+func stopBackground() error {
+	return task("/End", "/TN", taskName)
+}
+
+func restartBackground() error {
+	_ = stopBackground()
+	return task("/Run", "/TN", taskName)
+}
+
+func removeBackground() error {
+	_ = stopBackground()
+	if err := task("/Delete", "/TN", taskName, "/F"); err != nil {
+		lower := strings.ToLower(err.Error())
+		if !strings.Contains(lower, "cannot find the file specified") &&
+			!strings.Contains(lower, "cannot find the task") {
+			return err
+		}
+	}
+	configPath, err := backgroundPath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(configPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func backgroundSupported() bool {
+	_, err := exec.LookPath("schtasks.exe")
+	return err == nil
+}
