@@ -683,4 +683,3 @@ func (s *AppService) ServiceShutdown() error {
 	}
 	return s.StopTunnel()
 }
-}
