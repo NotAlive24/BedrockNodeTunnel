@@ -48,8 +48,27 @@ type Profile struct {
 	LocalUDPPort int    `json:"localUDPPort"`
 }
 
+const defaultTheme = "green"
+
+var supportedThemes = map[string]bool{
+	"green": true,
+	"cyan": true,
+	"blue": true,
+	"purple": true,
+	"orange": true,
+	"rose": true,
+}
+
 type AppSettings struct {
 	EnginePath string `json:"enginePath"`
+	Theme      string `json:"theme"`
+}
+
+func validateTheme(theme string) error {
+	if !supportedThemes[theme] {
+		return fmt.Errorf("unsupported theme %q", theme)
+	}
+	return nil
 }
 
 type appConfig struct {
@@ -166,6 +185,12 @@ func (s *AppService) loadConfig() {
 	}
 	if s.findProfileLocked(s.config.ActiveProfile) == nil {
 		s.config.ActiveProfile = s.config.Profiles[0].ID
+	}
+	if s.config.Settings.Theme == "" {
+		s.config.Settings.Theme = defaultTheme
+	} else if err := validateTheme(s.config.Settings.Theme); err != nil {
+		s.lastError = "Saved theme was not recognized; the default Green theme was restored"
+		s.config.Settings.Theme = defaultTheme
 	}
 	_ = s.saveConfigLocked()
 }
@@ -349,27 +374,40 @@ func (s *AppService) SaveSettings(settings AppSettings) error {
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
 
+	settings.Theme = strings.ToLower(strings.TrimSpace(settings.Theme))
+	if settings.Theme == "" {
+		settings.Theme = defaultTheme
+	}
+	if err := validateTheme(settings.Theme); err != nil {
+		return err
+	}
+
 	s.mu.RLock()
+	previousPath := s.config.Settings.EnginePath
 	running := s.cmd != nil
 	s.mu.RUnlock()
-	background, statusErr := backgroundStatus()
-	if statusErr != nil {
-		return fmt.Errorf("could not check background tunnel status: %w", statusErr)
-	}
-	if running || background {
-		return errors.New("stop the tunnel before changing the engine path")
-	}
-	if settings.EnginePath != "" {
-		if _, err := inspectEngine(settings.EnginePath); err != nil {
-			return err
+	enginePathChanged := previousPath != settings.EnginePath
+	if enginePathChanged {
+		background, statusErr := backgroundStatus()
+		if statusErr != nil {
+			return fmt.Errorf("could not check background tunnel status: %w", statusErr)
+		}
+		if running || background {
+			return errors.New("stop the tunnel before changing the engine path")
+		}
+		if settings.EnginePath != "" {
+			if _, err := inspectEngine(settings.EnginePath); err != nil {
+				return err
+			}
 		}
 	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	previousPath := s.config.Settings.EnginePath
+	previousSettings := s.config.Settings
 	s.config.Settings = settings
 	if err := s.saveConfigLocked(); err != nil {
-		s.config.Settings.EnginePath = previousPath
+		s.config.Settings = previousSettings
 		return err
 	}
 	if previousPath != settings.EnginePath {
