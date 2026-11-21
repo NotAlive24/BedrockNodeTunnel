@@ -72,8 +72,7 @@ CHECKSUMS="$TMP_DIR/SHA256SUMS"
 echo "Checking the latest stable Nethernet Desktop release..."
 download "$API_URL" "$RELEASE_JSON"
 
-VERSION="$(awk -F '"' '/"tag_name"[[:space:]]*:/ { print $4; exit }' "$RELEASE_JSON")"
-VERSION="${VERSION#v}"
+VERSION="$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"v\([^"]*\)".*/\1/p' "$RELEASE_JSON" | head -n 1)"
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
   fail "could not determine a valid stable release version from GitHub."
 fi
