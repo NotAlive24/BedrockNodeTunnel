@@ -36,19 +36,9 @@ jobs:
           cache-dependency-path: |
             go.sum
             desktop/go.mod
-      - name: Install Linux desktop dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
       - name: Resolve desktop dependencies
         working-directory: desktop
         run: go mod tidy
-      - name: Install Wails CLI
-        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0
-      - name: Generate frontend bindings
-        working-directory: desktop
-        run: wails3 generate bindings
       - name: Test CLI
         run: go test ./...
       - name: Test desktop
@@ -64,19 +54,18 @@ jobs:
           cat > stage/README.txt <<'EOF'
           Nethernet Desktop Control Suite
 
-          This archive contains the desktop control application and the matching
+          This archive contains the local browser UI launcher and matching
           Nethernet tunnel engine. Keep both files in the same directory.
 
-          Linux:
-          Requires GTK 4 and WebKitGTK 6.0 runtime libraries (Ubuntu 24.04+ /
-          Debian 13+ or equivalent). Run ./NethernetDesktop.
+          Start NethernetDesktop. It binds its HTTP server exclusively to
+          127.0.0.1 on an automatically selected local port and opens the UI
+          in your default browser. The UI is not exposed to your LAN.
 
-          Windows:
-          Windows 10/11 with the Microsoft Edge WebView2 Runtime is required.
-          Run NethernetDesktop.exe.
+          The system browser is required. No WebView2, GTK or WebKitGTK runtime
+          is required by the desktop control application.
 
-          The application stores profiles and settings in the current user's
-          configuration directory. Engine updates can also be managed in Settings.
+          The app stores profiles and settings in the current user's
+          configuration directory.
           EOF
       - name: Create Linux archive
         if: runner.os == 'Linux'
@@ -93,7 +82,7 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish desktop release assets
+    name: Publish portable desktop release assets
     if: startsWith(github.ref, 'refs/tags/desktop-v')
     needs: build
     runs-on: ubuntu-latest
