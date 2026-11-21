@@ -10,7 +10,7 @@ RequestExecutionLevel user
   !error "ARG_DESKTOP_BINARY must point to the built executable"
 !endif
 
-VIProductVersion "1.0.0.0"
+VIProductVersion "${PRODUCT_VERSION}.0"
 VIAddVersionKey "CompanyName" "NotAlive24"
 VIAddVersionKey "FileDescription" "Nethernet Desktop Installer"
 VIAddVersionKey "ProductVersion" "${PRODUCT_VERSION}"
