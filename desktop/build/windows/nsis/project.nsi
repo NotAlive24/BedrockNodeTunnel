@@ -29,6 +29,7 @@ ShowInstDetails show
 !insertmacro MUI_LANGUAGE "English"
 
 Section "Install"
+  SetShellVarContext current
   SetOutPath "$INSTDIR"
   File /oname=${PRODUCT_EXE} "${ARG_DESKTOP_BINARY}"
   WriteUninstaller "$INSTDIR\\Uninstall.exe"
@@ -38,6 +39,7 @@ Section "Install"
 SectionEnd
 
 Section "Uninstall"
+  SetShellVarContext current
   Delete "$SMPROGRAMS\\Nethernet Desktop\\Nethernet Desktop.lnk"
   RMDir "$SMPROGRAMS\\Nethernet Desktop"
   Delete "$DESKTOP\\Nethernet Desktop.lnk"
