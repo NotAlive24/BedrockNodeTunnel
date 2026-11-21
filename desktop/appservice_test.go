@@ -2,7 +2,8 @@ package main
 
 import (
 	"os"
-	"path/filepath"\n\t"strings"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
