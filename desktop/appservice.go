@@ -96,7 +96,7 @@ type AppSnapshot struct {
 
 type AppService struct {
 	mu                sync.RWMutex
-	updateMu          sync.Mutex
+	operationMu       sync.Mutex
 	engineCachePath   string
 	engineCacheSize   int64
 	engineCacheModTime time.Time
