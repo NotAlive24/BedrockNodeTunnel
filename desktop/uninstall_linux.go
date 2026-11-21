@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -60,11 +61,22 @@ func linuxPackageManager() (string, error) {
 		if _, err := exec.LookPath("pacman"); err != nil {
 			return "", errors.New("pacman was not found; remove the nethernet-desktop package manually")
 		}
+		if _, err := exec.Command("pacman", "-Q", "nethernet-desktop").Output(); err != nil {
+			return "", errors.New("Nethernet Desktop is not installed as an Arch package; portable copies must be removed manually")
+		}
 		return "pacman", nil
 	}
 	if _, err := os.Stat("/etc/debian_version"); err == nil {
 		if _, err := exec.LookPath("apt-get"); err != nil {
 			return "", errors.New("apt-get was not found; remove the nethernet-desktop package manually")
+		}
+		dpkg, err := exec.LookPath("dpkg-query")
+		if err != nil {
+			return "", errors.New("dpkg-query was not found; remove the nethernet-desktop package manually")
+		}
+		status, err := exec.Command(dpkg, "-W", "-f=${db:Status-Status}", "nethernet-desktop").Output()
+		if err != nil || strings.TrimSpace(string(status)) != "installed" {
+			return "", errors.New("Nethernet Desktop is not installed as a Debian package; portable copies must be removed manually")
 		}
 		return "apt", nil
 	}
