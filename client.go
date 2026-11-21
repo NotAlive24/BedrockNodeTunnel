@@ -198,6 +198,15 @@ func main() {
 			log.Fatalf("[Bedrock Node Tunnel] Invalid claim dashboard URL: %v", err)
 		}
 	}
+	if err := validateLocalTCPTarget(localSignaling); err != nil {
+		log.Fatalf("[Bedrock Node Tunnel] Invalid local TCP target: %v", err)
+	}
+	if localUDPDefault < 1 || localUDPDefault > 65535 {
+		log.Fatalf("[Bedrock Node Tunnel] Local UDP fallback port must be between 1 and 65535")
+	}
+	if localUDPIP != "" && net.ParseIP(localUDPIP) == nil {
+		log.Fatalf("[Bedrock Node Tunnel] Local UDP IP must be a valid IPv4 or IPv6 address")
+	}
 	if controlAddr != "" {
 		_ = saveNodeAddr(controlAddr)
 	}
@@ -209,6 +218,21 @@ func main() {
 	log.Printf("[Bedrock Node Tunnel] Universal Open-Source Client %s (Raw UDP Fast-Lane) Starting...", version)
 	log.Printf("[Bedrock Node Tunnel] Local TCP target: %s | Local UDP target IP: %s", localSignaling, localUDPIP)
 	runClient(controlAddr, pollWebOverride, token, localSignaling, localUDPIP, localUDPDefault)
+}
+
+func validateLocalTCPTarget(raw string) error {
+	host, portText, err := net.SplitHostPort(strings.TrimSpace(raw))
+	if err != nil || host == "" {
+		return errors.New("target must be in host:port format")
+	}
+	if strings.ContainsAny(host, " \t\r\n/?#@") {
+		return errors.New("target host contains invalid characters")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return errors.New("target port must be between 1 and 65535")
+	}
+	return nil
 }
 
 func resolveNodeInput(input string) RegionNode {
