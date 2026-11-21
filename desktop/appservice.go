@@ -29,44 +29,13 @@ const (
 	releaseAPI     = "https://api.github.com/repos/" + upstreamRepo + "/releases/latest"
 )
 
-var ansiPattern = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
-var secretPattern = regexp.MustCompile("(?i)(token\\s*[:=]\\s*)[^\\s,;]+")
-var claimPattern = regexp.MustCompile("(?i)([?&]claim=)[^&#\\s]+")
-var releaseTagPattern = regexp.MustCompile(`^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?package main
-
-import (
-	"bufio"
-	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"runtime"
-	"strconv"
-	"strings"
-	"sync"
-	"time"
+var (
+	ansiPattern       = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
+	secretPattern     = regexp.MustCompile("(?i)(token\\s*[:=]\\s*)[^\\s,;]+")
+	claimPattern      = regexp.MustCompile("(?i)([?&]claim=)[^&#\\s]+")
+	releaseTagPattern = regexp.MustCompile("^v[0-9]+\\.[0-9]+\\.[0-9]+(-[0-9A-Za-z.-]+)?$")
+	mojibakeReplacer  = strings.NewReplacer("â€¢", "•", "â€“", "–", "â€”", "—", "â€™", "’", "â€œ", "“", "â€", "”", "â€¦", "…", "Â ", " ")
 )
-
-const (
-	desktopVersion = "2.0.0"
-	upstreamRepo   = "NotAlive24/BedrockNodeTunnel"
-	releaseAPI     = "https://api.github.com/repos/" + upstreamRepo + "/releases/latest"
-)
-
-var ansiPattern = regexp.MustCompile("\x1b\\[[0-?]*[ -/]*[@-~]")
-var secretPattern = regexp.MustCompile("(?i)(token\\s*[:=]\\s*)[^\\s,;]+")
-)
-var mojibakeReplacer = strings.NewReplacer("â€¢", "•", "â€“", "–", "â€”", "—", "â€™", "’", "â€œ", "“", "â€", "”", "â€¦", "…", "Â ", " ")
 
 type Profile struct {
 	ID           string `json:"id"`
