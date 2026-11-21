@@ -3,14 +3,13 @@ package main
 import (
 	"encoding/json"
 	"io"
-	"strings"
-	"time"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 func TestLoopbackListenerBindsOnlyIPv4Loopback(t *testing.T) {
