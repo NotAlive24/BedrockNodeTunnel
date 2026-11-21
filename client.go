@@ -43,7 +43,7 @@ const (
 	rawUDPSocketBufferBytes = 512 * 1024
 )
 
-var version = "v1.3.0"
+var version = "v2.0.0"
 
 var errInvalidToken = errors.New("invalid auth token rejected by server")
 
@@ -171,7 +171,6 @@ func main() {
 			cleanWebURL = n.WebURL
 		}
 		pollWebOverride = cleanWebURL
-		_ = saveNodeAddr(controlAddr)
 	} else if explicitFlags["control"] && !explicitFlags["web"] {
 		n := resolveNodeInput(controlAddr)
 		controlAddr = n.ControlAddr
@@ -179,14 +178,27 @@ func main() {
 			cleanWebURL = n.WebURL
 		}
 		pollWebOverride = cleanWebURL
-		_ = saveNodeAddr(controlAddr)
 	} else if explicitFlags["web"] && !explicitFlags["control"] {
 		n := resolveNodeInput(cleanWebURL)
 		controlAddr = n.ControlAddr
 		pollWebOverride = cleanWebURL
-		_ = saveNodeAddr(controlAddr)
 	} else if explicitFlags["web"] && explicitFlags["control"] {
 		pollWebOverride = cleanWebURL
+	}
+
+	if controlAddr != "" {
+		controlAddr, err = validateControlAddr(controlAddr)
+		if err != nil {
+			log.Fatalf("[Bedrock Node Tunnel] Invalid control address: %v", err)
+		}
+	}
+	if pollWebOverride != "" {
+		pollWebOverride, err = validateWebURL(pollWebOverride)
+		if err != nil {
+			log.Fatalf("[Bedrock Node Tunnel] Invalid claim dashboard URL: %v", err)
+		}
+	}
+	if controlAddr != "" {
 		_ = saveNodeAddr(controlAddr)
 	}
 
@@ -267,54 +279,147 @@ func resolveNodeInput(input string) RegionNode {
 
 func getActiveNodeList(customControl, customWeb string) []RegionNode {
 	if customControl != "" || customWeb != "" {
-		cAddr := customControl
-		wURL := customWeb
-		if cAddr == "" && wURL != "" {
-			cAddr = resolveNodeInput(wURL).ControlAddr
+		control := customControl
+		web := customWeb
+		if control == "" && web != "" {
+			control = resolveNodeInput(web).ControlAddr
 		}
-		if wURL == "" && cAddr != "" {
-			wURL = resolveNodeInput(cAddr).WebURL
+		if web == "" && control != "" {
+			web = resolveNodeInput(control).WebURL
 		}
-		return []RegionNode{
-			{
-				Code:        "CUSTOM",
-				Name:        "Selected Node (" + cAddr + ")",
-				WebURL:      strings.TrimRight(wURL, "/"),
-				ControlAddr: cAddr,
-			},
-		}
+		return []RegionNode{{
+			Code: "CUSTOM", Name: "Selected Node (" + control + ")",
+			WebURL: strings.TrimRight(web, "/"), ControlAddr: control,
+		}}
 	}
 
-	var nodes []RegionNode
-	seenCtrl := make(map[string]bool)
-	addNode := func(n RegionNode) {
-		if n.ControlAddr == "" || seenCtrl[n.ControlAddr] {
+	nodes := make([]RegionNode, 0, len(defaultRegionNodes))
+	seenControl := make(map[string]bool)
+	addNode := func(node RegionNode) {
+		if node.ControlAddr == "" || seenControl[node.ControlAddr] {
 			return
 		}
-		seenCtrl[n.ControlAddr] = true
-		nodes = append(nodes, n)
+		seenControl[node.ControlAddr] = true
+		nodes = append(nodes, node)
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 3 {
+				return errors.New("too many redirects while loading node metadata")
+			}
+			host := strings.ToLower(req.URL.Hostname())
+			if req.URL.Scheme != "https" || !isBedrockNodeDomain(host) {
+				return errors.New("node metadata redirect left the trusted HTTPS service domain")
+			}
+			return nil
+		},
+	}
 	if resp, err := client.Get("https://bedrocknode.net/api/nodes"); err == nil {
 		if resp.StatusCode == http.StatusOK {
-			var remoteNodes []RegionNode
-			if json.NewDecoder(resp.Body).Decode(&remoteNodes) == nil {
-				for _, rn := range remoteNodes {
-					if rn.ControlAddr == "" && rn.WebURL != "" {
-						rn = resolveNodeInput(rn.WebURL)
+			data, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+			if readErr == nil && len(data) <= 1<<20 {
+				var remoteNodes []RegionNode
+				if json.Unmarshal(data, &remoteNodes) == nil {
+					for _, remote := range remoteNodes {
+						if trusted, ok := sanitizeDiscoveredNode(remote); ok {
+							addNode(trusted)
+						}
 					}
-					addNode(rn)
 				}
 			}
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}
 
-	for _, n := range defaultRegionNodes {
-		addNode(n)
+	// Built-in endpoints remain the trusted fallback if metadata is unavailable
+	// or contains a region/address that fails validation.
+	for _, node := range defaultRegionNodes {
+		addNode(node)
 	}
 	return nodes
+}
+
+func isBedrockNodeDomain(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	return host == "bedrocknode.net" || strings.HasSuffix(host, ".bedrocknode.net")
+}
+
+func sanitizeDiscoveredNode(remote RegionNode) (RegionNode, bool) {
+	code := strings.ToUpper(strings.TrimSpace(remote.Code))
+	var fallback *RegionNode
+	for i := range defaultRegionNodes {
+		if defaultRegionNodes[i].Code == code {
+			fallback = &defaultRegionNodes[i]
+			break
+		}
+	}
+	if fallback == nil {
+		return RegionNode{}, false
+	}
+
+	webURL := fallback.WebURL
+	if strings.TrimSpace(remote.WebURL) != "" {
+		validated, err := validateWebURL(remote.WebURL)
+		if err != nil {
+			return RegionNode{}, false
+		}
+		parsed, err := url.Parse(validated)
+		if err != nil || parsed.Scheme != "https" || !isBedrockNodeDomain(parsed.Hostname()) {
+			return RegionNode{}, false
+		}
+		webURL = validated
+	}
+
+	control := fallback.ControlAddr
+	if strings.TrimSpace(remote.ControlAddr) != "" {
+		validated, err := validateControlAddr(remote.ControlAddr)
+		if err != nil {
+			return RegionNode{}, false
+		}
+		host, port, _ := net.SplitHostPort(validated)
+		if port != "7000" {
+			return RegionNode{}, false
+		}
+		if ip := net.ParseIP(host); ip != nil {
+			// Dynamic IP changes require a client update; do not send tokens to
+			// an arbitrary public IP returned by an HTTP metadata document.
+			if validated != fallback.ControlAddr {
+				return RegionNode{}, false
+			}
+		} else if !isBedrockNodeDomain(host) {
+			return RegionNode{}, false
+		}
+		control = validated
+	}
+
+	name := strings.TrimSpace(remote.Name)
+	name = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, name)
+	if name == "" || len(name) > 96 {
+		name = fallback.Name
+	}
+	return RegionNode{Code: fallback.Code, Name: name, WebURL: webURL, ControlAddr: control}, true
+}
+
+func validateControlAddr(raw string) (string, error) {
+	host, portText, err := net.SplitHostPort(strings.TrimSpace(raw))
+	if err != nil || host == "" {
+		return "", errors.New("control address must be in host:port format")
+	}
+	if strings.ContainsAny(host, " \t\r\n/?#@") {
+		return "", errors.New("control host contains invalid characters")
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil || port < 1 || port > 65535 {
+		return "", errors.New("control port must be between 1 and 65535")
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port)), nil
 }
 
 func validateWebURL(rawURL string) (string, error) {
@@ -323,10 +428,28 @@ func validateWebURL(rawURL string) (string, error) {
 		return "", err
 	}
 	if u.Scheme != "https" && u.Scheme != "http" {
-		return "", errors.New("URL scheme must be http or https")
+		return "", errors.New("URL scheme must be https (HTTP is allowed only for loopback testing)")
 	}
-	if u.Host == "" {
+	if u.Host == "" || u.Hostname() == "" {
 		return "", errors.New("URL host cannot be empty")
+	}
+	if u.User != nil || u.Fragment != "" || u.Opaque != "" {
+		return "", errors.New("URL must not contain user information, fragments, or opaque data")
+	}
+	if u.RawQuery != "" {
+		return "", errors.New("base dashboard URL must not contain a query string")
+	}
+	if u.Scheme == "http" {
+		ip := net.ParseIP(u.Hostname())
+		if ip == nil || !ip.IsLoopback() {
+			return "", errors.New("unencrypted HTTP is permitted only for loopback dashboard testing")
+		}
+	}
+	if port := u.Port(); port != "" {
+		value, err := strconv.Atoi(port)
+		if err != nil || value < 1 || value > 65535 {
+			return "", errors.New("URL port must be between 1 and 65535")
+		}
 	}
 	return strings.TrimRight(u.String(), "/"), nil
 }
