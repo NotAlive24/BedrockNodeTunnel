@@ -457,13 +457,31 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 	checksumURI.Path = strings.TrimSuffix(checksumURI.Path, asset) + "SHA256SUMS"
 	checksumURI.RawPath = ""
 
+	downloadClient := &http.Client{
+		Timeout: 90 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 || req.URL.Scheme != "https" {
+				return errors.New("engine download used an unsafe redirect")
+			}
+			host := strings.ToLower(req.URL.Hostname())
+			allowed := host == "github.com" ||
+				host == "objects.githubusercontent.com" ||
+				host == "release-assets.githubusercontent.com" ||
+				strings.HasSuffix(host, ".githubusercontent.com")
+			if !allowed {
+				return errors.New("engine download redirected outside trusted GitHub asset hosts")
+			}
+			return nil
+		},
+	}
+
 	download := func(downloadURL string, limit int64) ([]byte, error) {
 		rq, err := http.NewRequest(http.MethodGet, downloadURL, nil)
 		if err != nil {
 			return nil, err
 		}
 		rq.Header.Set("User-Agent", "Nethernet-Desktop/2.0.0")
-		r, err := client.Do(rq)
+		r, err := downloadClient.Do(rq)
 		if err != nil {
 			return nil, err
 		}
