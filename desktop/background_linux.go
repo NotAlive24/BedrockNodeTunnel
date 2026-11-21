@@ -140,12 +140,22 @@ func restartBackground() error {
 }
 
 func removeBackground() error {
-	_ = systemctl("disable", "--now", "bedrocknode-tunnel.service")
+	if err := systemctl("disable", "--now", "bedrocknode-tunnel.service"); err != nil {
+		active, statusErr := backgroundStatus()
+		if statusErr != nil {
+			return fmt.Errorf("could not verify background service state after disable failed: %w", statusErr)
+		}
+		if active {
+			return fmt.Errorf("could not stop active background service: %w", err)
+		}
+	}
 	_, unitPath, err := backgroundPaths()
 	if err != nil {
 		return err
 	}
-	_ = os.Remove(unitPath)
+	if err := os.Remove(unitPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	return systemctl("daemon-reload")
 }
 
