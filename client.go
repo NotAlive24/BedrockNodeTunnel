@@ -1162,6 +1162,7 @@ func runRawUDPFastLane(stopCh <-chan struct{}, controlAddr, token, localUDPIP st
 							if rErr != nil {
 								errStr := rErr.Error()
 								if strings.Contains(errStr, "forcibly closed") || strings.Contains(errStr, "connection refused") {
+									time.Sleep(100 * time.Millisecond)
 									continue
 								}
 								return
