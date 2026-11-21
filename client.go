@@ -582,10 +582,16 @@ func splitOptionalNodeToken(raw string) (string, string) {
 	s := strings.TrimSpace(raw)
 	if strings.Contains(s, "|") {
 		parts := strings.SplitN(s, "|", 2)
-		nPart := strings.TrimSpace(parts[0])
-		tPart := strings.TrimSpace(parts[1])
-		if nPart != "" && isValidToken(tPart) {
-			return resolveNodeInput(nPart).ControlAddr, tPart
+		nodePart := strings.TrimSpace(parts[0])
+		tokenPart := strings.TrimSpace(parts[1])
+		if nodePart != "" && isValidToken(tokenPart) {
+			node := resolveNodeInput(nodePart)
+			// Only built-in region aliases may override the control endpoint
+			// from a token response. Custom endpoints must be explicitly set
+			// by the user with -control.
+			if node.Code != "CUSTOM" {
+				return node.ControlAddr, tokenPart
+			}
 		}
 	}
 	return "", s
