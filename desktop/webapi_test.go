@@ -69,7 +69,8 @@ func testAppService(t *testing.T) *AppService {
 func testWebHandler(t *testing.T, shutdown func()) http.Handler {
 	t.Helper()
 	assets := fstest.MapFS{
-		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>Nethernet</title>")},
+		"index.html": &fstest.MapFile{Data: []byte("<!doctype html><title>Nethernet</title><script src=\"/app.js\" defer></script>")},
+		"app.js":     &fstest.MapFile{Data: []byte("fetch(\"/api/health\")")},
 	}
 	return newWebHandler(testAppService(t), "127.0.0.1:34567", assets, shutdown)
 }
@@ -97,6 +98,23 @@ func TestWebHandlerServesFrontendOnLoopback(t *testing.T) {
 	}
 	if recorder.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatal("CORS access must not be enabled")
+	}
+}
+
+func TestWebHandlerServesExternalScriptWithStrictCSP(t *testing.T) {
+	handler := testWebHandler(t, nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, localRequest(http.MethodGet, "/app.js"))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("GET /app.js status = %d, want %d: %s", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "fetch(\"/api/health\")") {
+		t.Fatalf("app.js content missing: %q", recorder.Body.String())
+	}
+	policy := recorder.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "script-src 'self'") || strings.Contains(policy, "script-src 'self' 'unsafe-inline'") {
+		t.Fatalf("unexpected script policy: %q", policy)
 	}
 }
 
