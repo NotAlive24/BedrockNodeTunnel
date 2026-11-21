@@ -23,7 +23,9 @@ jobs:
           cache: true
 
       - name: Validate Linux installer syntax
-        run: bash -n install.sh
+        run: |
+          bash -n install.sh
+          bash -n install-desktop.sh
 
       - name: Validate desktop UI JavaScript
         run: node --check desktop/frontend/app.js

@@ -27,7 +27,23 @@ The v1.3 tunnel capabilities remain: Raw UDP Fast-Lane, mapped TCP streams for m
 
 All assets in the unified `v2.0.0` release are listed in `SHA256SUMS`.
 
-## Linux CLI quick install
+## Linux quick install
+
+There are two separate installers. Choose the one that matches what you want:
+
+### Nethernet Desktop (graphical UI)
+
+On **Arch Linux x86_64** or **Debian/Ubuntu x86_64**, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install-desktop.sh | bash
+```
+
+This detects `pacman` or `apt`, downloads the matching native Desktop package from the latest stable release, verifies it against `SHA256SUMS`, and installs it using your package manager. It requires `sudo` for the system package installation. Launch it with `NethernetDesktop`.
+
+The native Desktop packages in v2.0.0 are x86_64-only. The script does not install the CLI separately; the Desktop package provides the graphical launcher.
+
+### CLI only (no graphical UI)
 
 Run:
 
@@ -35,7 +51,9 @@ Run:
 curl -fsSL https://raw.githubusercontent.com/NotAlive24/BedrockNodeTunnel/main/install.sh | bash
 ```
 
-The installer detects x86_64/amd64 or ARM64, downloads the matching CLI binary from this repository's latest release, verifies its SHA-256 checksum, and installs it to `~/.local/bin/nethernet-client`. It does not require sudo.
+The CLI installer detects x86_64/amd64 or ARM64, downloads the matching standalone tunnel-client binary from this repository's latest stable release, verifies its SHA-256 checksum, and installs it to `~/.local/bin/nethernet-client`. It does not require sudo and does not install Nethernet Desktop.
+
+For either one-liner, you can inspect the installer before running it by replacing the pipe with `-o installer.sh` and opening the downloaded file.
 
 The CLI stores its tunnel token and selected node under `~/.config/bedrocknode-tunnel` where possible. On systemd-based distributions, the installer can write a per-user service unit.
 
