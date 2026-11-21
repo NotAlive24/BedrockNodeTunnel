@@ -515,14 +515,7 @@ func (s *AppService) ClearLogs() {
 	s.logs = nil
 }
 
-func (s *AppService) StopTunnel() error {
-	active, err := backgroundStatus()
-	if err != nil {
-		return fmt.Errorf("could not check background tunnel status: %w", err)
-	}
-	if active {
-		return stopBackground()
-	}
+func (s *AppService) stopForegroundTunnel() error {
 	s.mu.RLock()
 	cmd, done := s.cmd, s.done
 	s.mu.RUnlock()
@@ -541,6 +534,17 @@ func (s *AppService) StopTunnel() error {
 		}
 	}
 	return nil
+}
+
+func (s *AppService) StopTunnel() error {
+	active, err := backgroundStatus()
+	if err != nil {
+		return fmt.Errorf("could not check background tunnel status: %w", err)
+	}
+	if active {
+		return stopBackground()
+	}
+	return s.stopForegroundTunnel()
 }
 
 func (s *AppService) RestartTunnel() error {
@@ -675,11 +679,10 @@ func controlAddress(region string) string {
 
 func (s *AppService) ServiceShutdown() error {
 	active, err := backgroundStatus()
-	if err != nil {
-		return fmt.Errorf("could not check background tunnel status: %w", err)
-	}
-	if active {
+	if err == nil && active {
 		return nil
 	}
-	return s.StopTunnel()
+	// The app owns any foreground child, so stop it even if the service
+	// manager is unavailable or its status query times out.
+	return s.stopForegroundTunnel()
 }
