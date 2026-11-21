@@ -165,3 +165,28 @@ func TestFramedPacketRoundTrip(t *testing.T) {
 		t.Fatal("oversized packet must be rejected")
 	}
 }
+
+func TestSplitOptionalNodeTokenOnlyAcceptsBuiltInRegions(t *testing.T) {
+	control, token := splitOptionalNodeToken("UK|valid-token")
+	if control != defaultRegionNodes[2].ControlAddr || token != "valid-token" {
+		t.Fatalf("known region prefix = (%q, %q)", control, token)
+	}
+
+	control, token = splitOptionalNodeToken("evil.example:7000|valid-token")
+	if control != "" || token != "evil.example:7000|valid-token" {
+		t.Fatalf("custom endpoint prefix must not redirect token: (%q, %q)", control, token)
+	}
+}
+
+func TestValidateLocalTCPTarget(t *testing.T) {
+	for _, valid := range []string{"127.0.0.1:19132", "localhost:19132", "[::1]:19132"} {
+		if err := validateLocalTCPTarget(valid); err != nil {
+			t.Errorf("validateLocalTCPTarget(%q): %v", valid, err)
+		}
+	}
+	for _, invalid := range []string{"", "localhost", "host:0", "host:65536", "host name:19132"} {
+		if err := validateLocalTCPTarget(invalid); err == nil {
+			t.Errorf("validateLocalTCPTarget(%q) should fail", invalid)
+		}
+	}
+}
