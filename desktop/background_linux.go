@@ -1,6 +1,7 @@
 //go:build linux
 package main
-import("context";"encoding/json";"errors";"os";"os/exec";"path/filepath";"strconv";"strings";"time")
+import("context";"encoding/json";"errors"
+	"fmt";"os";"os/exec";"path/filepath";"strconv";"strings";"time")
 type backgroundConfig struct{Binary string; Args []string}
 func backgroundPaths()(string,string,error){d,e:=os.UserConfigDir();if e!=nil{return "","",e};return filepath.Join(d,"bedrocknode-tunnel","background.json"),filepath.Join(d,"systemd","user","bedrocknode-tunnel.service"),nil}
 func configureBackground(binary string,args []string)error{
@@ -24,22 +25,42 @@ func systemctl(args ...string) error {
 	return nil
 }
 func backgroundStatus() (bool, error) {
+	systemctlPath, err := exec.LookPath("systemctl")
+	if errors.Is(err, exec.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	c := exec.CommandContext(ctx, "systemctl", "--user", "is-active", "--quiet", "bedrocknode-tunnel.service")
-	err := c.Run()
+	cmd := exec.CommandContext(ctx, systemctlPath, "--user", "is-active", "bedrocknode-tunnel.service")
+	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		return false, errors.New("systemctl status check timed out")
 	}
 	if err == nil {
-		return true, nil
+		switch strings.TrimSpace(string(output)) {
+		case "active":
+			return true, nil
+		case "inactive", "failed":
+			return false, nil
+		default:
+			return false, fmt.Errorf("unexpected systemd service state: %q", strings.TrimSpace(string(output)))
+		}
 	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
-		return false, nil
+		// systemctl returns 3 for inactive and 4 for an unknown unit.
+		if exitErr.ExitCode() == 3 || exitErr.ExitCode() == 4 {
+			return false, nil
+		}
+		return false, fmt.Errorf("systemctl status check failed: %s", strings.TrimSpace(string(output)))
 	}
 	return false, err
 }
+
 func startBackground()error{if e:=systemctl("daemon-reload");e!=nil{return e};return systemctl("enable","--now","bedrocknode-tunnel.service")}
 func stopBackground()error{return systemctl("stop","bedrocknode-tunnel.service")}
 func restartBackground()error{return systemctl("restart","bedrocknode-tunnel.service")}
