@@ -4,9 +4,11 @@ The desktop control suite is a standalone Go launcher that serves its embedded b
 
 ## Linux
 
-The native package workflow produces:
-- Debian/Ubuntu `.deb`
-- Arch Linux `.pkg.tar.zst`
+The current native package workflow targets x86_64 and produces:
+- Debian/Ubuntu amd64 `.deb`
+- Arch Linux x86_64 `.pkg.tar.zst`
+
+The Windows NSIS installer and portable archives are also built for x64 in the current release matrix.
 
 The packages install the launcher in `/usr/bin`, the generated application icon in the hicolor icon theme, and a desktop entry. No GTK4 or WebKitGTK runtime dependency is required by the control suite.
 
