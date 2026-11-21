@@ -123,7 +123,10 @@ func NewAppService() *AppService {
 		root = filepath.Join(home, ".config")
 	}
 	dir := filepath.Join(root, "bedrocknode-tunnel")
-	_ = os.MkdirAll(dir, 0700)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return &AppService{configDir: dir, configPath: filepath.Join(dir, "desktop.json"), connection: "Stopped", lastError: "Could not create config directory: " + err.Error()}
+	}
+	_ = os.Chmod(dir, 0700)
 	s := &AppService{configDir: dir, configPath: filepath.Join(dir, "desktop.json"), connection: "Stopped"}
 	s.loadConfig()
 	return s
@@ -132,14 +135,37 @@ func NewAppService() *AppService {
 func (s *AppService) loadConfig() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	data, err := os.ReadFile(s.configPath)
-	if err == nil { _ = json.Unmarshal(data, &s.config) }
-	if s.config.SchemaVersion == 0 { s.config.SchemaVersion = 1 }
-	if len(s.config.Profiles) == 0 {
-		p := defaultProfile()
-		s.config.Profiles, s.config.ActiveProfile = []Profile{p}, p.ID
+	if err == nil {
+		var loaded appConfig
+		if decodeErr := json.Unmarshal(data, &loaded); decodeErr == nil && loaded.SchemaVersion <= 1 {
+			s.config = loaded
+		} else {
+			// Preserve malformed or unsupported user data before initializing
+			// defaults; never silently destroy the only copy of the old config.
+			backupPath := s.configPath + ".corrupt"
+			if _, statErr := os.Stat(backupPath); errors.Is(statErr, os.ErrNotExist) {
+				_ = os.WriteFile(backupPath, data, 0600)
+				_ = os.Chmod(backupPath, 0600)
+			}
+			if decodeErr != nil {
+				s.lastError = "Existing desktop configuration was invalid and was backed up: " + decodeErr.Error()
+			} else {
+				s.lastError = "Existing desktop configuration uses an unsupported newer schema; a fresh config was created"
+			}
+		}
 	}
-	if s.findProfileLocked(s.config.ActiveProfile) == nil { s.config.ActiveProfile = s.config.Profiles[0].ID }
+	if s.config.SchemaVersion == 0 {
+		s.config.SchemaVersion = 1
+	}
+	if len(s.config.Profiles) == 0 {
+		profile := defaultProfile()
+		s.config.Profiles, s.config.ActiveProfile = []Profile{profile}, profile.ID
+	}
+	if s.findProfileLocked(s.config.ActiveProfile) == nil {
+		s.config.ActiveProfile = s.config.Profiles[0].ID
+	}
 	_ = s.saveConfigLocked()
 }
 
@@ -150,9 +176,36 @@ func defaultProfile() Profile {
 func (s *AppService) saveConfigLocked() error {
 	s.config.SchemaVersion = 1
 	data, err := json.MarshalIndent(s.config, "", "  ")
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(s.configPath), 0700); err != nil {
+		return err
+	}
 	tmp := s.configPath + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil { return err }
+	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	if err := file.Chmod(0600); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
 	return os.Rename(tmp, s.configPath)
 }
 
