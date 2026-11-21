@@ -238,23 +238,57 @@ func profileArgs(p Profile) []string {
 	return args
 }
 
+func engineAssetName() string {
+	name := "nethernet-client-" + runtime.GOOS + "-" + runtime.GOARCH
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return name
+}
+
 func (s *AppService) resolveEngine() string {
-	s.mu.RLock(); configured := s.config.Settings.EnginePath; s.mu.RUnlock()
-	candidates := []string{}
-	if configured != "" { candidates = append(candidates, configured) }
+	s.mu.RLock()
+	configured := s.config.Settings.EnginePath
+	s.mu.RUnlock()
+
+	baseName := "nethernet-client"
+	if runtime.GOOS == "windows" {
+		baseName += ".exe"
+	}
+	assetName := engineAssetName()
+	candidates := make([]string, 0, 6)
+	if configured != "" {
+		candidates = append(candidates, configured)
+	}
 	exe, _ := os.Executable()
 	if exe != "" {
-		name := "nethernet-client"
-		if runtime.GOOS == "windows" { name += ".exe" }
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), name))
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(exeDir, baseName))
+		if assetName != baseName {
+			candidates = append(candidates, filepath.Join(exeDir, assetName))
+		}
 	}
-	name := "nethernet-client"
-	if runtime.GOOS == "windows" { name += ".exe" }
-	if found, err := exec.LookPath(name); err == nil { candidates = append(candidates, found) }
-	candidates = append(candidates, filepath.Join(s.configDir, "bin", name))
+	if found, err := exec.LookPath(baseName); err == nil {
+		candidates = append(candidates, found)
+	}
+	candidates = append(candidates,
+		filepath.Join(s.configDir, "bin", assetName),
+		filepath.Join(s.configDir, "bin", baseName),
+	)
+	seen := make(map[string]struct{}, len(candidates))
 	for _, candidate := range candidates {
-		info, err := os.Stat(candidate)
-		if err == nil && !info.IsDir() { return candidate }
+		if candidate == "" {
+			continue
+		}
+		clean := filepath.Clean(candidate)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		seen[clean] = struct{}{}
+		info, err := os.Stat(clean)
+		if err == nil && !info.IsDir() {
+			return clean
+		}
 	}
 	return ""
 }
@@ -301,8 +335,10 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&release); err != nil { return EngineInfo{}, fmt.Errorf("invalid release metadata: %w", err) }
 	arch := runtime.GOARCH
 	if arch != "amd64" && arch != "arm64" { return EngineInfo{}, fmt.Errorf("unsupported engine architecture: %s", arch) }
-	asset := "nethernet-client-" + runtime.GOOS + "-" + arch
-	if runtime.GOOS == "windows" { asset += ".exe" }
+	asset := engineAssetName()
+	if strings.TrimSuffix(asset, ".exe") != "nethernet-client-"+runtime.GOOS+"-"+arch {
+		return EngineInfo{}, fmt.Errorf("unsupported engine architecture: %s", arch)
+	}
 	assetURL := ""
 	for _, item := range release.Assets { if item.Name == asset { assetURL = item.URL; break } }
 	if assetURL == "" { return EngineInfo{}, fmt.Errorf("release %s does not contain %s", release.TagName, asset) }
