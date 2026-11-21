@@ -178,10 +178,21 @@ func (s *AppService) SaveProfile(profile Profile) ([]Profile, error) {
 }
 
 func (s *AppService) SetActiveProfile(id string) error {
-	s.mu.Lock(); defer s.mu.Unlock()
-	if s.findProfileLocked(id) == nil { return errors.New("profile not found") }
-	if s.cmd != nil { return errors.New("stop the foreground tunnel before switching profiles") }
-	if active, _ := backgroundStatus(); active { return errors.New("stop the background tunnel before switching profiles") }
+	active, err := backgroundStatus()
+	if err != nil {
+		return fmt.Errorf("could not check background tunnel status: %w", err)
+	}
+	if active {
+		return errors.New("stop the background tunnel before switching profiles")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.findProfileLocked(id) == nil {
+		return errors.New("profile not found")
+	}
+	if s.cmd != nil {
+		return errors.New("stop the foreground tunnel before switching profiles")
+	}
 	s.config.ActiveProfile = id
 	return s.saveConfigLocked()
 }
@@ -315,8 +326,13 @@ func (s *AppService) InstallOrUpdateEngine() (EngineInfo, error) {
 	s.mu.RLock()
 	running := s.cmd != nil
 	s.mu.RUnlock()
-	background, _ := backgroundStatus()
-	if running || background { return EngineInfo{}, errors.New("stop the tunnel before installing or updating the engine") }
+	background, statusErr := backgroundStatus()
+	if statusErr != nil {
+		return EngineInfo{}, fmt.Errorf("could not check background tunnel status: %w", statusErr)
+	}
+	if running || background {
+		return EngineInfo{}, errors.New("stop the tunnel before installing or updating the engine")
+	}
 	client := &http.Client{Timeout:90*time.Second}
 	req, err := http.NewRequest(http.MethodGet, releaseAPI, nil)
 	if err != nil { return EngineInfo{}, err }
@@ -404,7 +420,13 @@ func (s *AppService) StartTunnel() error {
 	if s.cmd != nil { s.mu.Unlock(); return errors.New("tunnel process is already running") }
 	profile := s.activeProfileLocked()
 	s.mu.Unlock()
-	if active, _ := backgroundStatus(); active { return errors.New("background tunnel is already running; stop it before starting the desktop-managed process") }
+	active, statusErr := backgroundStatus()
+	if statusErr != nil {
+		return fmt.Errorf("could not check background tunnel status: %w", statusErr)
+	}
+	if active {
+		return errors.New("background tunnel is already running; stop it before starting the desktop-managed process")
+	}
 	binary := s.resolveEngine()
 	if binary == "" { return errors.New("tunnel engine is not installed; use Settings → Install / Update Engine first") }
 	if _, err := inspectEngine(binary); err != nil { return err }
@@ -494,39 +516,84 @@ func (s *AppService) ClearLogs() {
 }
 
 func (s *AppService) StopTunnel() error {
-	if active, _ := backgroundStatus(); active { return stopBackground() }
-	s.mu.RLock(); cmd, done := s.cmd, s.done; s.mu.RUnlock()
-	if cmd == nil || cmd.Process == nil { return nil }
-	if err := cmd.Process.Signal(os.Interrupt); err != nil { _ = cmd.Process.Kill() }
+	active, err := backgroundStatus()
+	if err != nil {
+		return fmt.Errorf("could not check background tunnel status: %w", err)
+	}
+	if active {
+		return stopBackground()
+	}
+	s.mu.RLock()
+	cmd, done := s.cmd, s.done
+	s.mu.RUnlock()
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+		_ = cmd.Process.Kill()
+	}
 	if done != nil {
 		select {
 		case <-done:
-		case <-time.After(4*time.Second): _ = cmd.Process.Kill(); <-done
+		case <-time.After(4 * time.Second):
+			_ = cmd.Process.Kill()
+			<-done
 		}
 	}
 	return nil
 }
 
 func (s *AppService) RestartTunnel() error {
-	if active, _ := backgroundStatus(); active {
+	active, err := backgroundStatus()
+	if err != nil {
+		return fmt.Errorf("could not check background tunnel status: %w", err)
+	}
+	if active {
 		binary := s.resolveEngine()
-		if binary == "" { return errors.New("tunnel engine is not installed") }
-		s.mu.RLock(); p := s.activeProfileLocked(); s.mu.RUnlock()
-		if err := configureBackground(binary, profileArgs(p)); err != nil { return err }
+		if binary == "" {
+			return errors.New("tunnel engine is not installed")
+		}
+		s.mu.RLock()
+		p := s.activeProfileLocked()
+		s.mu.RUnlock()
+		if err := configureBackground(binary, profileArgs(p)); err != nil {
+			return err
+		}
 		return restartBackground()
 	}
-	_ = s.StopTunnel()
+	if err := s.StopTunnel(); err != nil {
+		return err
+	}
 	return s.StartTunnel()
 }
 
 func (s *AppService) StartBackground() error {
-	s.mu.RLock(); p, running := s.activeProfileLocked(), s.cmd != nil; s.mu.RUnlock()
-	if running { return errors.New("stop the foreground tunnel before enabling background mode") }
+	s.mu.RLock()
+	p, running := s.activeProfileLocked(), s.cmd != nil
+	s.mu.RUnlock()
+	if running {
+		return errors.New("stop the foreground tunnel before enabling background mode")
+	}
+	background, err := backgroundStatus()
+	if err != nil {
+		return fmt.Errorf("could not check background tunnel status: %w", err)
+	}
+	if background {
+		return errors.New("background tunnel is already running")
+	}
 	binary := s.resolveEngine()
-	if binary == "" { return errors.New("tunnel engine is not installed; use Settings → Install / Update Engine first") }
-	if _, err := inspectEngine(binary); err != nil { return err }
-	if err := configureBackground(binary, profileArgs(p)); err != nil { return err }
-	if err := startBackground(); err != nil { return err }
+	if binary == "" {
+		return errors.New("tunnel engine is not installed; use Settings → Install / Update Engine first")
+	}
+	if _, err := inspectEngine(binary); err != nil {
+		return err
+	}
+	if err := configureBackground(binary, profileArgs(p)); err != nil {
+		return err
+	}
+	if err := startBackground(); err != nil {
+		return err
+	}
 	s.addLog("INFO", "Background tunnel service started")
 	return nil
 }
@@ -548,7 +615,10 @@ func (s *AppService) GetSnapshot() AppSnapshot {
 	cmd, started, connection, lastError := s.cmd, s.startedAt, s.connection, s.lastError
 	profile, profiles := s.activeProfileLocked(), append([]Profile(nil), s.config.Profiles...)
 	s.mu.RUnlock()
-	background, _ := backgroundStatus()
+	background, statusErr := backgroundStatus()
+	if statusErr != nil && lastError == "" {
+		lastError = "Could not read background tunnel status: " + statusErr.Error()
+	}
 	engine := s.resolveEngine()
 	engineVersion, engineFound := "", false
 	if engine != "" {
@@ -604,9 +674,13 @@ func controlAddress(region string) string {
 }
 
 func (s *AppService) ServiceShutdown() error {
-	active, _ := backgroundStatus()
+	active, err := backgroundStatus()
+	if err != nil {
+		return fmt.Errorf("could not check background tunnel status: %w", err)
+	}
 	if active {
 		return nil
 	}
 	return s.StopTunnel()
+}
 }
