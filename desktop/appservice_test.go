@@ -2,12 +2,71 @@ package main
 
 import (
 	"os"
+	"encoding/json"
 	"path/filepath"
 	"os/exec"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestThemeValidationAndDefault(t *testing.T) {
+	if defaultTheme != "green" {
+		t.Fatalf("default theme = %q, want green", defaultTheme)
+	}
+	for _, theme := range []string{"green", "cyan", "blue", "purple", "orange", "rose"} {
+		if err := validateTheme(theme); err != nil {
+			t.Errorf("validateTheme(%q): %v", theme, err)
+		}
+	}
+	for _, theme := range []string{"", "Green", "red", "unknown"} {
+		if err := validateTheme(theme); err == nil {
+			t.Errorf("validateTheme(%q) should fail", theme)
+		}
+	}
+}
+
+func TestSaveSettingsPersistsThemeWithoutStoppingTunnel(t *testing.T) {
+	root := t.TempDir()
+	service := &AppService{
+		configDir: root,
+		configPath: filepath.Join(root, "desktop.json"),
+		config: appConfig{
+			SchemaVersion: 1,
+			ActiveProfile: "default",
+			Profiles: []Profile{defaultProfile()},
+			Settings: AppSettings{Theme: defaultTheme},
+		},
+	}
+	if err := service.SaveSettings(AppSettings{Theme: "purple"}); err != nil {
+		t.Fatalf("SaveSettings(theme only): %v", err)
+	}
+	data, err := os.ReadFile(service.configPath)
+	if err != nil {
+		t.Fatalf("read saved config: %v", err)
+	}
+	var saved appConfig
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatalf("decode saved config: %v", err)
+	}
+	if saved.Settings.Theme != "purple" {
+		t.Fatalf("saved theme = %q, want purple", saved.Settings.Theme)
+	}
+}
+
+func TestLoadConfigDefaultsMissingThemeToGreen(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "desktop.json")
+	legacy := `{"schemaVersion":1,"activeProfile":"default","profiles":[{"id":"default","name":"Default","region":"AUTO","localTCP":"127.0.0.1:19132","localUDPPort":47334}]}`
+	if err := os.WriteFile(configPath, []byte(legacy), 0600); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+	service := &AppService{configDir: root, configPath: configPath}
+	service.loadConfig()
+	if got := service.GetSettings().Theme; got != "green" {
+		t.Fatalf("legacy config theme = %q, want green", got)
+	}
+}
 
 func TestValidateProfile(t *testing.T) {
  valid := Profile{ID:"test",Name:"Home",Region:"AUTO",LocalTCP:"127.0.0.1:19132",LocalUDPPort:47334}
