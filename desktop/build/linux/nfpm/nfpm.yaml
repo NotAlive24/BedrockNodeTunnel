@@ -20,5 +20,3 @@ contents:
     dst: /usr/share/icons/hicolor/512x512/apps/nethernet-desktop.png
   - src: ./build/linux/NethernetDesktop.desktop
     dst: /usr/share/applications/nethernet-desktop.desktop
-
-depends: []
