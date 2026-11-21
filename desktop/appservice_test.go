@@ -2,7 +2,7 @@ package main
 
 import (
 	"os"
-	"path/filepath"
+	"path/filepath"\n\t"strings"
 	"testing"
 )
 
@@ -56,3 +56,20 @@ func TestResolveEngineFindsUpdaterInstalledAsset(t *testing.T) {
 	}
 }
 
+
+func TestCleanLogLineNormalizesMojibakeAndRedactsClaimCodes(t *testing.T) {
+	input := "[Bedrock Node Tunnel] â€¢ Oceania (Sydney Hub): https://oceania.bedrocknode.net/?claim=3DD314"
+	got := cleanLogLine(input)
+	if strings.Contains(got, "â€¢") {
+		t.Fatalf("mojibake bullet was not normalized: %q", got)
+	}
+	if !strings.Contains(got, "• Oceania") {
+		t.Fatalf("expected normalized bullet and hub name, got %q", got)
+	}
+	if strings.Contains(got, "3DD314") {
+		t.Fatalf("one-time claim code was not redacted: %q", got)
+	}
+	if !strings.Contains(got, "claim=[redacted]") {
+		t.Fatalf("redacted claim marker missing: %q", got)
+	}
+}
